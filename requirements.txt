@@ -1,0 +1,6 @@
+# Тетради практики. Ставится один раз:  pip install -r requirements.txt
+jupyter>=1.0
+psycopg2-binary>=2.9
+matplotlib>=3.7
+requests>=2.31
+tabulate>=0.9

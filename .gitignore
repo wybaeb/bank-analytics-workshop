@@ -1,0 +1,6 @@
+.env
+.ipynb_checkpoints/
+__pycache__/
+artifacts/stand.json
+charts/
+*.pyc
