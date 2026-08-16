@@ -129,18 +129,24 @@ class Assistant:
 
     def run(self, messages: list[dict], functions: list[dict],
             call_tool: Callable[[str, dict], object], max_steps: int = 12,
-            log: Callable[[str], None] = print) -> tuple[str, list[dict]]:
+            log: Callable[[str], None] = print,
+            force_first: str | None = None) -> tuple[str, list[dict]]:
         """Диалог с инструментами.
 
         `functions` — описания в формате JSON Schema (name, description, parameters).
         `call_tool(name, arguments)` — выполняет инструмент и возвращает результат.
+        `force_first` — имя инструмента, который ассистент обязан вызвать первым
+        шагом. Без этого модель иногда «пересказывает» вызов текстом вместо того,
+        чтобы действительно сходить в данные.
+
         Возвращает финальный текст ответа и полную ленту сообщений.
         """
         messages = list(messages)
         for step in range(max_steps):
+            выбор = {"name": force_first} if (step == 0 and force_first) else "auto"
             body = {"model": self.model, "messages": messages,
                     "temperature": self.temperature, "functions": functions,
-                    "function_call": "auto"}
+                    "function_call": выбор}
             message = self._post(body)["choices"][0]["message"]
             call = message.get("function_call")
 
