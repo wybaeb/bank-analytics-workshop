@@ -34,6 +34,23 @@ GIGA_OAUTH = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 GIGA_BASE = "https://gigachat.devices.sberbank.ru/api/v1"
 
 
+def _tls():
+    """Что передать в `verify` при обращении к GigaChat.
+
+    Сертификат GigaChat подписан НУЦ Минцифры, а на учебной машине этой цепочки
+    обычно нет — поэтому по умолчанию проверка выключена, иначе первое же
+    обращение падает и практика останавливается на установке сертификатов.
+
+    В корпоративном контуре так оставлять нельзя: поставьте сертификаты и
+    укажите `GIGACHAT_CA_BUNDLE` (путь к файлу с цепочкой) либо
+    `GIGACHAT_VERIFY=1`, если цепочка уже в системном хранилище.
+    """
+    bundle = os.environ.get("GIGACHAT_CA_BUNDLE", "").strip()
+    if bundle:
+        return bundle
+    return os.environ.get("GIGACHAT_VERIFY", "").strip().lower() in ("1", "true", "yes")
+
+
 def load_env(path: Path | None = None) -> None:
     """Простое чтение .env — чтобы тетрадь работала без внешних библиотек."""
     env = path or ROOT / ".env"
@@ -85,7 +102,7 @@ class Assistant:
                      "RqUID": str(uuid.uuid4()),
                      "Content-Type": "application/x-www-form-urlencoded"},
             data={"scope": os.environ.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")},
-            verify=False, timeout=60,
+            verify=_tls(), timeout=60,
         )
         r.raise_for_status()
         data = r.json()
@@ -102,7 +119,7 @@ class Assistant:
                         f"{GIGA_BASE}/chat/completions",
                         headers={"Authorization": "Bearer " + self._giga_token(),
                                  "Content-Type": "application/json"},
-                        json=body, verify=False, timeout=300,
+                        json=body, verify=_tls(), timeout=300,
                     )
                 else:
                     r = requests.post(
