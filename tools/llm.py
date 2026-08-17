@@ -141,33 +141,84 @@ class Assistant:
 
         Возвращает финальный текст ответа и полную ленту сообщений.
         """
+        # GigaChat всё ещё принимает legacy functions/function_call.
+        # OpenAI-совместимые роутеры (agentplatform.ru, OpenRouter, свежий OpenAI)
+        # legacy формат игнорируют — модель отвечает текстом «не могу вызвать».
+        # Поэтому для openai-пути отправляем новый tools/tool_choice.
         messages = list(messages)
         for step in range(max_steps):
-            выбор = {"name": force_first} if (step == 0 and force_first) else "auto"
             body = {"model": self.model, "messages": messages,
-                    "temperature": self.temperature, "functions": functions,
-                    "function_call": выбор}
+                    "temperature": self.temperature}
+            if self.backend == "gigachat":
+                body["functions"] = functions
+                body["function_call"] = (
+                    {"name": force_first} if (step == 0 and force_first) else "auto"
+                )
+            else:
+                body["tools"] = [{"type": "function", "function": f} for f in functions]
+                body["tool_choice"] = (
+                    {"type": "function", "function": {"name": force_first}}
+                    if (step == 0 and force_first) else "auto"
+                )
+
             message = self._post(body)["choices"][0]["message"]
-            call = message.get("function_call")
+            calls = self._extract_calls(message)
 
-            if not call:
-                messages.append({"role": "assistant", "content": message.get("content", "")})
-                return message.get("content", ""), messages
+            if not calls:
+                messages.append({"role": "assistant",
+                                 "content": message.get("content", "") or ""})
+                return message.get("content", "") or "", messages
 
-            name = call["name"]
-            raw_args = call.get("arguments", {})
-            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-            log(f"  шаг {step + 1}: {name}({', '.join(f'{k}=…' for k in args)})")
+            # Собираем ответ ассистента в формате того же протокола, в котором получили.
+            if self.backend == "gigachat":
+                one = calls[0]
+                messages.append({"role": "assistant", "content": message.get("content", ""),
+                                 "function_call": {"name": one["name"],
+                                                   "arguments": one["arguments_obj"]}})
+            else:
+                messages.append({"role": "assistant",
+                                 "content": message.get("content"),
+                                 "tool_calls": [{"id": c["id"], "type": "function",
+                                                 "function": {"name": c["name"],
+                                                              "arguments": c["arguments_str"]}}
+                                                for c in calls]})
 
-            # GigaChat ждёт аргументы объектом, OpenAI-совместимый путь — строкой.
-            echo_args = args if self.backend == "gigachat" else json.dumps(args, ensure_ascii=False)
-            messages.append({"role": "assistant", "content": message.get("content", ""),
-                             "function_call": {"name": name, "arguments": echo_args}})
-            try:
-                result = call_tool(name, args)
-            except Exception as exc:
-                result = {"error": str(exc)}
-            messages.append({"role": "function", "name": name,
-                             "content": json.dumps(result, ensure_ascii=False, default=str)[:12000]})
+            for c in calls:
+                log(f"  шаг {step + 1}: {c['name']}("
+                    f"{', '.join(f'{k}=…' for k in c['arguments_obj'])})")
+                try:
+                    result = call_tool(c["name"], c["arguments_obj"])
+                except Exception as exc:
+                    result = {"error": str(exc)}
+                payload = json.dumps(result, ensure_ascii=False, default=str)[:12000]
+                if self.backend == "gigachat":
+                    messages.append({"role": "function", "name": c["name"], "content": payload})
+                else:
+                    messages.append({"role": "tool", "tool_call_id": c["id"],
+                                     "name": c["name"], "content": payload})
 
         return "Ассистент не уложился в отведённое число шагов.", messages
+
+    @staticmethod
+    def _extract_calls(message: dict) -> list[dict]:
+        """Единый вид вызовов инструмента для обоих протоколов."""
+        calls: list[dict] = []
+        for tc in message.get("tool_calls") or []:                # OpenAI новый
+            fn = tc.get("function", {})
+            raw = fn.get("arguments", "{}")
+            args = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            calls.append({"id": tc.get("id", ""), "name": fn.get("name", ""),
+                          "arguments_obj": args,
+                          "arguments_str": raw if isinstance(raw, str)
+                          else json.dumps(args, ensure_ascii=False)})
+        if calls:
+            return calls
+        fc = message.get("function_call")                          # OpenAI/GigaChat legacy
+        if fc:
+            raw = fc.get("arguments", {})
+            args = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            calls.append({"id": "", "name": fc.get("name", ""),
+                          "arguments_obj": args,
+                          "arguments_str": raw if isinstance(raw, str)
+                          else json.dumps(args, ensure_ascii=False)})
+        return calls
