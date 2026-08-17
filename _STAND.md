@@ -1,13 +1,13 @@
-# Стенд kk_dddm: запуск практики банка
+# Общий стенд: запуск практики банка
 
 Эта папка — клон [`wybaeb/bank-analytics-workshop`](https://github.com/wybaeb/bank-analytics-workshop),
-подложенный рядом с другими уроками kk_dddm. Локальный `./run.sh up` и
+подложенный рядом с другими материалами стенда. Локальный `./run.sh up` и
 `docker-compose.yml` из этого репо на стенде **запускать не нужно**: общий
 Postgres и Metabase уже подняты, база `bank_training` залита из дампа.
 
 ## Что уже готово
 
-- Общий Postgres контейнера `dddm-shuvaev-postgres-1` содержит БД
+- Общий Postgres стенда (имя контейнера смотрите в `docker ps`) содержит БД
   `bank_training` под пользователем `bank_user` / `bank_pass`
   (6 таблиц + 8 представлений после прогона тетрадей).
 - Общий Metabase (<http://localhost:3000>) содержит подключение
@@ -19,10 +19,10 @@ Postgres и Metabase уже подняты, база `bank_training` залит�
 
 ## Как открыть
 
-1. Открыть VS Code в браузере: <http://localhost:8443> (пароль стенда —
-   `dddm2026`).
-2. В сайдбаре — папка `bank_workshop/` рядом со старыми уроками (`L2.*`,
-   `L3.*` и т. п. не тронуты).
+1. Открыть VS Code в браузере: <http://localhost:8443> (пароль стенда
+   присылает преподаватель).
+2. В сайдбаре — папка `bank_workshop/` рядом с остальными материалами
+   стенда; их содержимое не трогаем.
 3. Двинуться по материалам в порядке нумерации папок:
    - [`2.2_разведочный_анализ/`](2.2_разведочный_анализ/) — что такое очистка
      данных и какие решения принимаются по данным; читается до кейсов.
@@ -59,17 +59,20 @@ Postgres и Metabase уже подняты, база `bank_training` залит�
 
 | Что | Где на стенде |
 |---|---|
-| БД `bank_training` | контейнер `dddm-shuvaev-postgres-1`, порт 5432 в docker-сети (5433 с хоста) |
-| Metabase | контейнер `dddm-shuvaev-metabase-1`, `http://metabase:3000` из code-server, `http://localhost:3000` с хоста |
+| БД `bank_training` | контейнер Postgres стенда, порт 5432 в docker-сети (5433 с хоста) |
+| Metabase | контейнер Metabase стенда, `http://metabase:3000` из code-server, `http://localhost:3000` с хоста |
 | Реквизиты БД | из `.env` рядом с этим файлом (`PGHOST=postgres`, `PGPORT=5432`) |
-| Провайдер ассистента | из окружения контейнера code-server (корневой `.env` kk_dddm), `ASSISTANT_BACKEND=openai` |
+| Провайдер ассистента | из окружения контейнера code-server (корневой `.env` стенда), `ASSISTANT_BACKEND=openai` |
 
 ## Если что-то сломалось
+
+Имена контейнеров у каждого стенда свои — посмотрите их `docker ps` и
+подставьте вместо `$POSTGRES_CONTAINER` и `$CODE_SERVER_CONTAINER`.
 
 Восстановить БД из дампа:
 
 ```bash
-docker exec -i dddm-shuvaev-postgres-1 \
+docker exec -i $POSTGRES_CONTAINER \
   psql -U bank_user -d bank_training -v ON_ERROR_STOP=1 \
   < sql/dump/bank_training.sql
 ```
@@ -77,13 +80,13 @@ docker exec -i dddm-shuvaev-postgres-1 \
 Пересобрать pyc-кеш `tools/`:
 
 ```bash
-docker exec dddm-shuvaev-code-server-1 \
+docker exec $CODE_SERVER_CONTAINER \
   rm -rf /home/coder/project/bank_workshop/tools/__pycache__
 ```
 
 Проверить, что БД видит `bank_user`:
 
 ```bash
-docker exec dddm-shuvaev-postgres-1 \
+docker exec $POSTGRES_CONTAINER \
   psql -U bank_user -d bank_training -c "\dt"
 ```
