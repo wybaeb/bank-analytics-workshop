@@ -6,7 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nb import code, md, sql, write            # noqa: E402
 
-OUT = Path(__file__).resolve().parents[2] / "case_pipeline_sql" / "конвейер_sql.ipynb"
+OUT = (Path(__file__).resolve().parents[2] / "2.6_кейс_кредитный_конвейер" /
+       "2.6.1_конвейер_sql.ipynb")
 
 cells = [
     md("""

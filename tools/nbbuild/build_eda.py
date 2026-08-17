@@ -11,8 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nb import code, md, sql, write            # noqa: E402
 
-OUT = (Path(__file__).resolve().parents[2] / "case_pipeline_sql" /
-       "разведочный_анализ.ipynb")
+OUT = (Path(__file__).resolve().parents[2] / "2.2_разведочный_анализ" /
+       "2.2.1_разведочный_анализ.ipynb")
 
 cells = [
     md("""
@@ -487,7 +487,7 @@ print("Последний месяц:", месяцы.iloc[-1]["месяц"],
 - Те же операции в SQL и в pandas, рядом и со сверкой результатов —
   [`памятка_sql_pandas.ipynb`](памятка_sql_pandas.ipynb).
 - Тот же анализ, но запросом обычными словами, делает агент — кейс
-  [`../case_portfolio_agent/отчёт_по_запросу.ipynb`](../case_portfolio_agent/отчёт_по_запросу.ipynb).
+  [`../2.7_кейс_отчёт_агента/2.7.1_отчёт_по_запросу.ipynb`](../2.7_кейс_отчёт_агента/2.7.1_отчёт_по_запросу.ipynb).
 """),
 ]
 

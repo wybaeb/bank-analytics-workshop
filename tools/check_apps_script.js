@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const скрипт = require(path.join(ROOT, 'case_cards_spreadsheet/reference/активация_карт.gs'));
+const скрипт = require(path.join(ROOT, '2.5_кейс_карточный_бизнес/2.5.6_эталон_google_apps_script.gs'));
 
 // --- читаем выгрузку так же, как её видит редактор таблиц -----------------
 const текст = fs.readFileSync(path.join(ROOT, 'data/cards/cards_issued_raw.csv'), 'utf8')

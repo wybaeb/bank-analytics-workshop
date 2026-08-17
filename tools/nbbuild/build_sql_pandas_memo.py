@@ -7,7 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nb import code, md, write                 # noqa: E402
 from pairs_sql_pandas import PAIRS, ПРАВИЛО, ВСТУПЛЕНИЕ   # noqa: E402
 
-OUT = Path(__file__).resolve().parents[2] / "case_pipeline_sql" / "памятка_sql_pandas.ipynb"
+OUT = (Path(__file__).resolve().parents[2] / "2.3_памятка_sql_и_pandas" /
+       "2.3.1_памятка_sql_и_pandas.ipynb")
 
 cells = [
     md(f"""

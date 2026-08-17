@@ -6,7 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nb import code, md, write            # noqa: E402
 
-OUT = Path(__file__).resolve().parents[2] / "case_portfolio_agent" / "отчёт_по_запросу.ipynb"
+OUT = (Path(__file__).resolve().parents[2] / "2.7_кейс_отчёт_агента" /
+       "2.7.1_отчёт_по_запросу.ipynb")
 
 cells = [
     md("""
