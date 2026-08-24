@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Анализ накопительного счёта</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .container { max-width: 960px; margin: auto; padding-top: 20px; }
+        h1 { text-align: center; color: #337ab7; }
+        label { display: block; margin-bottom: 5px; }
+        select { width: 100%; height: 30px; border-radius: 4px; border: 1px solid #ccc; padding-left: 10px; box-sizing: border-box; }
+        button { background-color: #337ab7; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 4px; transition: all 0.3s ease-in-out; }
+        button:hover { background-color: #286090; }
+        canvas { display: block; margin: 0 auto; }
+        .plot { position: relative; height: 360px; width: 100%; margin: 24px 0; }
+        .plot canvas { width: 100% !important; height: 100% !important; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        .card { background-color: #fff; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,.1); padding: 20px; margin-bottom: 20px; }
+        .card-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+        .card-text { font-size: 14px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Анализ накопительных счетов</h1>
+    
+    <!-- Загрузка файла -->
+    <label for="fileInput">Выберите файл CSV:</label>
+    <input type="file" id="fileInput"/>
+    
+    <!-- Итоговые карточки -->
+    <div class="row">
+        <div class="col-md-3 card">
+            <span class="card-title">Новые счета (за последний месяц)</span>
+            <p class="card-text"><strong><span id="newAccountsLastMonth"></span></strong></p>
+        </div>
+        
+        <div class="col-md-3 card">
+            <span class="card-title">Закрытые счета (за последний месяц)</span>
+            <p class="card-text"><strong><span id="closedAccountsLastMonth"></span></strong></p>
+        </div>
+        
+        <div class="col-md-3 card">
+            <span class="card-title">Активные счета (на конец последнего месяца)</span>
+            <p class="card-text"><strong><span id="activeAccountsLastMonth"></span></strong></p>
+        </div>
+        
+        <div class="col-md-3 card">
+            <span class="card-title">Изменение новых счетов (% к аналогичному месяцу прошлого года)</span>
+            <p class="card-text"><strong><span id="changeNewAccountsYearAgo"></span>%</strong></p>
+        </div>
+    </div>
+    
+    <!-- Фильтрация -->
+    <select id="channelFilter">
+        <option value="">Все каналы</option>
+        <option value="Мобильное приложение">Мобильное приложение</option>
+        <option value="Отделение">Отделение</option>
+        <option value="Сайт банка">Сайт банка</option>
+        <option value="Партнёрская сеть">Партнёрская сеть</option>
+    </select>
+    
+    <select id="regionFilter">
+        <option value="">Все регионы</option>
+        <option value="Центральный">Центральный</option>
+        <option value="Северо-Западный">Северо-Западный</option>
+        <option value="Южный">Южный</option>
+        <option value="Уральский">Уральский</option>
+        <option value="Сибирский">Сибирский</option>
+    </select>
+    
+    <!-- Динамика открытия/закрытия счетов -->
+    <div class="plot"><canvas id="accountsChart"></canvas></div>
+    
+    <!-- Три отдельных графика по каналам -->
+    <div class="plot"><canvas id="newAccountsByChannel"></canvas></div>
+    <div class="plot"><canvas id="closeRatesByChannel"></canvas></div>
+    <div class="plot"><canvas id="avgBalancesByChannel"></canvas></div>
+</div>
+
+<!-- Подключение актуальной версии Chart.js v4 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<script>
+// ПРАВКА 1: разобранная выгрузка сохраняется, чтобы фильтры не перечитывали файл
+let ДАННЫЕ = [];
+
+document.getElementById('fileInput').addEventListener('change', function(event){
+    const file = event.target.files[0];
+    if (!file || !/\.(csv)$/.test(file.name)) return alert("Пожалуйста, выберите корректный CSV-файл.");
+
+    let reader = new FileReader();
+    reader.onload = () => {
+        ДАННЫЕ = parseCSV(reader.result);
+        renderDashboard(ДАННЫЕ);
+    };
+    reader.readAsText(file);
+});
+
+function parseCSV(csvData) {
+    const rows = csvData.split("\n");
+    const headers = rows.shift().replace(/^\uFEFF/, "").split(";");
+    const parsedData = [];
+
+    rows.forEach(row => {
+        if(!row.trim()) return;
+        const values = row.split(";");
+        const obj = {};
+        headers.forEach((header, i) => {
+            obj[header.trim()] = values[i].trim();
+        });
+        parsedData.push(obj);
+    });
+
+    // Преобразование числовых значений
+    parsedData.forEach(item => {
+        item['новые_счета'] = Number(item['новые_счета'].replace(',', '.'));
+        item['закрытые_счета'] = Number(item['закрытые_счета'].replace(',', '.'));
+        item['активные_счета_на_конец_месяца'] = Number(item['активные_счета_на_конец_месяца'].replace(',', '.'));
+        item['средний_остаток_тыс_руб'] = Number(item['средний_остаток_тыс_руб'].replace(',', '.'));
+    });
+
+    return parsedData;
+}
+
+// ПРАВКА 2: прежний график на холсте уничтожается, иначе Chart.js не рисует новый
+const ГРАФИКИ = {};
+
+function холст(id) {
+    if (ГРАФИКИ[id]) ГРАФИКИ[id].destroy();
+    return document.getElementById(id);
+}
+
+// Рендеринг дашборда
+function renderDashboard(data) {
+    const filteredData = filterData(data);
+    const lastMonth = getLastMonth(filteredData);
+    const previousYearMonth = getPreviousYearMonth(lastMonth, filteredData);
+
+    updateCards(filteredData, lastMonth, previousYearMonth);
+    drawAccountsChart(filteredData);
+    drawChannelsCharts(filteredData);
+}
+
+// Обновление карточек
+function updateCards(filteredData, lastMonth, previousYearMonth) {
+    const lastMonthData = aggregateByMonth(filteredData, lastMonth);
+    const previousYearMonthData = aggregateByMonth(filteredData, previousYearMonth);
+
+    document.getElementById('newAccountsLastMonth').textContent = Math.round(lastMonthData.new_accounts_sum);
+    document.getElementById('closedAccountsLastMonth').textContent = Math.round(lastMonthData.closed_accounts_sum);
+    document.getElementById('activeAccountsLastMonth').textContent = Math.round(lastMonthData.active_accounts_sum);
+    document.getElementById('changeNewAccountsYearAgo').textContent = calculatePercentageChange(previousYearMonthData.new_accounts_sum, lastMonthData.new_accounts_sum).toFixed(2);
+}
+
+// Агрегирование данных по месяцам
+function aggregateByMonth(data, month) {
+    const aggregatedData = data.filter(d => d['месяц'] === month)
+                               .reduce((acc, curr) => ({
+                                   new_accounts_sum: acc.new_accounts_sum + curr['новые_счета'],
+                                   closed_accounts_sum: acc.closed_accounts_sum + curr['закрытые_счета'],
+                                   active_accounts_sum: acc.active_accounts_sum + curr['активные_счета_на_конец_месяца']
+                               }), { new_accounts_sum: 0, closed_accounts_sum: 0, active_accounts_sum: 0 });
+    return aggregatedData;
+}
+
+// Получаем последний месяц
+function getLastMonth(data) {
+    return data.map(d => d['месяц']).sort().slice(-1)[0];
+}
+
+// Получаем аналогичный месяц предыдущего года
+function getPreviousYearMonth(currentMonth, data) {
+    const [year, month] = currentMonth.split('-');
+    const prevYearMonth = `${Number(year) - 1}-${month}`;
+    return data.some(d => d['месяц'] === prevYearMonth) ? prevYearMonth : null;
+}
+
+// Расчет изменения в процентах
+function calculatePercentageChange(prevValue, currentValue) {
+    return (currentValue - prevValue) / prevValue * 100;
+}
+
+// Фильтруем данные по фильтру региона и канала
+function filterData(data) {
+    const selectedChannel = document.getElementById('channelFilter').value;
+    const selectedRegion = document.getElementById('regionFilter').value;
+
+    return data.filter(d => (
+        (selectedChannel === '' || d['канал'] === selectedChannel) &&
+        (selectedRegion === '' || d['регион'] === selectedRegion)
+    ));
+}
+
+// Построение графика динамики открытия/закрытия счетов
+function drawAccountsChart(filteredData) {
+    const groupedData = groupAndAggregate(filteredData);
+    const months = Object.keys(groupedData);
+    const newAccounts = months.map(m => groupedData[m].new_accounts_sum);
+    const closedAccounts = months.map(m => groupedData[m].closed_accounts_sum);
+
+    const accountsCtx = холст('accountsChart');
+    ГРАФИКИ['accountsChart'] = new Chart(accountsCtx, {
+        type: 'line',
+        data: {
+            labels: months,
+            datasets: [
+                {
+                    label: 'Открытие счетов',
+                    data: newAccounts,
+                    fill: false,
+                    borderColor: '#337ab7'
+                },
+                {
+                    label: 'Закрытие счетов',
+                    data: closedAccounts,
+                    fill: false,
+                    borderColor: '#d9534f'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Динамика открытия и закрытия счетов'
+                },
+                tooltip: {}
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+// Группировка и агрегирование данных по месяцам
+function groupAndAggregate(data) {
+    return data.reduce((grouped, record) => {
+        const key = record['месяц'];
+        if (!grouped[key]) {
+            grouped[key] = { new_accounts_sum: 0, closed_accounts_sum: 0 };
+        }
+        grouped[key].new_accounts_sum += record['новые_счета'];
+        grouped[key].closed_accounts_sum += record['закрытые_счета'];
+        return grouped;
+    }, {});
+}
+
+// Построение графиков по каждому каналу отдельно
+function drawChannelsCharts(filteredData) {
+    const channels = [...new Set(filteredData.map(d => d['канал']))];
+
+    // Новые счета по каналам
+    const newAccountsByChannel = channels.map(c => 
+        filteredData.filter(d => d['канал'] === c)
+                   .reduce((sum, d) => sum + d['новые_счета'], 0)
+    );
+
+    const newAccountsCtx = холст('newAccountsByChannel');
+    ГРАФИКИ['newAccountsByChannel'] = new Chart(newAccountsCtx, {
+        type: 'bar',
+        data: {
+            labels: channels,
+            datasets: [
+                {
+                    label: 'Новых счетов за период',
+                    data: newAccountsByChannel,
+                    backgroundColor: '#337ab7'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Сравнительная динамика новых счетов по каналам'
+                },
+                tooltip: {},
+                legend: { display: false }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Процент закрытий по каналам
+    const closeRatesByChannel = channels.map(c => {
+        const channelData = filteredData.filter(d => d['канал'] === c);
+        const totalOpened = channelData.reduce((sum, d) => sum + d['новые_счета'], 0);
+        const totalClosed = channelData.reduce((sum, d) => sum + d['закрытые_счета'], 0);
+        return totalOpened > 0 ? (totalClosed / totalOpened * 100).toFixed(2) : 0;
+    });
+
+    const closeRatesCtx = холст('closeRatesByChannel');
+    ГРАФИКИ['closeRatesByChannel'] = new Chart(closeRatesCtx, {
+        type: 'bar',
+        data: {
+            labels: channels,
+            datasets: [
+                {
+                    label: '% Закрытий к открытию',
+                    data: closeRatesByChannel,
+                    backgroundColor: '#d9534f'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Процент закрытий по каналам'
+                },
+                tooltip: {},
+                legend: { display: false }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Средние остатки по каналам
+    const avgBalancesByChannel = channels.map(c => {
+        const channelData = filteredData.filter(d => d['канал'] === c);
+        const totalBalance = channelData.reduce((sum, d) => sum + d['средний_остаток_тыс_руб'], 0);
+        return channelData.length > 0 ? (totalBalance / channelData.length).toFixed(2) : 0;
+    });
+
+    const avgBalancesCtx = холст('avgBalancesByChannel');
+    ГРАФИКИ['avgBalancesByChannel'] = new Chart(avgBalancesCtx, {
+        type: 'bar',
+        data: {
+            labels: channels,
+            datasets: [
+                {
+                    label: 'Средний остаток (тыс руб)',
+                    data: avgBalancesByChannel,
+                    backgroundColor: '#5cb85c'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Средние остатки по каналам'
+                },
+                tooltip: {},
+                legend: { display: false }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+// Добавляем обработчики событий для фильтров
+document.querySelectorAll('#channelFilter, #regionFilter').forEach(select => {
+    select.addEventListener('change', () => {
+        if (ДАННЫЕ.length) renderDashboard(ДАННЫЕ);
+    });
+});
+</script>
+</body>
+</html>

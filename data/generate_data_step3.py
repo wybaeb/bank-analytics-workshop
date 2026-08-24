@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Генератор учебных наборов данных для практики ИИ-инструментов и методов анализа.
+
+Данные синтетические. Зерно фиксировано, поэтому повторный запуск даёт
+побайтово те же файлы — их можно держать в репозитории и сверять.
+
+    python3 data/generate_data_step3.py
+
+Три набора:
+  product/  — помесячная выгрузка по накопительному счёту (регионы × каналы)
+  clients/  — выборка клиентов для сегментации (кластерный анализ)
+  series/   — дневной ряд операций портфеля с тремя сезонностями
+"""
+from __future__ import annotations
+
+import csv
+import math
+import random
+from datetime import date, timedelta
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+SEED = 20260824
+
+
+def write_csv(path: Path, header: list[str], rows: list[list], delimiter: str = ";",
+              bom: bool = True) -> None:
+    """Метка кодировки нужна файлам, которые открывают в табличном редакторе."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig" if bom else "utf-8", newline="") as f:
+        w = csv.writer(f, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL)
+        w.writerow(header)
+        w.writerows(rows)
+    print(f"  {path.relative_to(BASE.parent)}: {len(rows)} строк")
+
+
+# ------------------------------------- набор 1: накопительный счёт (product)
+
+REGIONS = {
+    "Центральный": 1.00,
+    "Северо-Западный": 0.62,
+    "Южный": 0.48,
+    "Уральский": 0.55,
+    "Сибирский": 0.51,
+}
+
+# канал: (доля новых счетов в начале периода, доля в конце,
+#         доля закрытий от новых, средний остаток тыс руб)
+CHANNELS = {
+    "Мобильное приложение": (0.38, 0.50, 0.18, 210),
+    "Отделение":            (0.34, 0.24, 0.14, 340),
+    "Сайт банка":           (0.16, 0.12, 0.22, 180),
+    "Партнёрская сеть":     (0.12, 0.14, 0.61, 95),
+}
+
+
+def gen_product() -> None:
+    rnd = random.Random(SEED)
+    months = []
+    y, m = 2024, 7
+    for _ in range(24):
+        months.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+
+    rows = []
+    active = {(r, c): int(9000 * REGIONS[r] * CHANNELS[c][0])
+              for r in REGIONS for c in CHANNELS}
+    for i, month in enumerate(months):
+        t = i / 23
+        total_new = 5200 * (1 + 0.55 * t)          # общий приток растёт
+        for region, rw in REGIONS.items():
+            for channel, (s0, s1, close_share, balance) in CHANNELS.items():
+                share = s0 + (s1 - s0) * t
+                new = total_new * rw / sum(REGIONS.values()) * share
+                new *= rnd.uniform(0.9, 1.1)
+                closed = new * close_share * rnd.uniform(0.85, 1.15)
+                # в партнёрском канале доля закрытий растёт со временем
+                if channel == "Партнёрская сеть":
+                    closed *= 1 + 0.5 * t
+                new, closed = int(new), int(closed)
+                active[(region, channel)] += new - closed
+                bal = balance * rnd.uniform(0.92, 1.08) * (1 + 0.10 * t)
+                rows.append([month, region, channel, new, closed,
+                             active[(region, channel)], f"{bal:.1f}".replace(".", ",")])
+    write_csv(BASE / "product" / "savings_monthly.csv",
+              ["месяц", "регион", "канал", "новые_счета", "закрытые_счета",
+               "активные_счета_на_конец_месяца", "средний_остаток_тыс_руб"], rows)
+
+
+# --------------------------------------- набор 2: клиенты для сегментации
+
+def _clip(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
+def gen_clients() -> None:
+    rnd = random.Random(SEED + 1)
+    segments = [
+        # (n, возраст μ σ, доход μ σ, остаток μ σ, операций μ σ, цифровая доля μ σ)
+        (1300, 29, 4, 95, 20, 120, 60, 46, 12, 0.86, 0.07),
+        (700, 54, 5, 230, 40, 1900, 600, 14, 5, 0.24, 0.09),
+        (1000, 50, 5, 215, 35, 1400, 500, 38, 10, 0.84, 0.07),
+    ]
+    rows = []
+    cid = 100001
+    for (n, am, asd, im, isd, bm, bsd, om, osd, dm, dsd) in segments:
+        for _ in range(n):
+            age = int(_clip(rnd.gauss(am, asd), 21, 68))
+            income = _clip(rnd.gauss(im, isd), 35, 420)
+            balance = _clip(rnd.gauss(bm, bsd), 5, 4200)
+            ops = int(_clip(rnd.gauss(om, osd), 1, 90))
+            digital = _clip(rnd.gauss(dm, dsd), 0.02, 0.99)
+            rows.append([cid, age, f"{income:.0f}", f"{balance:.0f}", ops,
+                         f"{digital:.2f}".replace(".", ",")])
+            cid += 1
+    rnd.shuffle(rows)
+    write_csv(BASE / "clients" / "clients_sample.csv",
+              ["id_клиента", "возраст", "доход_тыс_руб", "средний_остаток_тыс_руб",
+               "операций_в_месяц", "доля_цифровых_операций"], rows)
+
+
+# ------------------------------- набор 3: дневной ряд операций портфеля
+
+MONTH_FACTOR = {1: 0.82, 2: 0.90, 3: 1.00, 4: 1.02, 5: 0.94, 6: 1.10,
+                7: 1.05, 8: 0.98, 9: 1.04, 10: 1.06, 11: 1.08, 12: 1.22}
+WEEKDAY_FACTOR = {0: 1.10, 1: 1.15, 2: 1.12, 3: 1.10, 4: 1.05, 5: 0.55, 6: 0.35}
+
+# Просадки уровня по месяцам ряда (индекс месяца от начала → множитель).
+# Первая — короткая и давняя, вторая — глубокая, начинается за восемь месяцев
+# до конца ряда, последние четыре месяца восстанавливаются. На этой форме
+# линия тренда по последнему году показывает падение, а модель, выбранная
+# по ошибке на отложенных периодах, — восстановление.
+DIPS = {14: 0.97, 15: 0.92, 16: 0.90, 17: 0.93, 18: 0.98,
+        30: 0.97, 31: 0.92, 32: 0.87, 33: 0.845, 34: 0.85,
+        35: 0.875, 36: 0.905, 37: 0.935}
+
+
+def gen_series() -> None:
+    rnd = random.Random(SEED + 2)
+    mf_mean = sum(MONTH_FACTOR.values()) / 12
+    wf_mean = sum(WEEKDAY_FACTOR.values()) / 7
+    start = date(2023, 7, 1)
+    rows = []
+    d = start
+    while d <= date(2026, 8, 31):
+        month_index = (d.year - 2023) * 12 + d.month - 7
+        level = (100 + 1.0 * month_index) * DIPS.get(month_index, 1.0)
+        season_y = MONTH_FACTOR[d.month] / mf_mean
+        season_w = WEEKDAY_FACTOR[d.weekday()] / wf_mean
+        # конец месяца: зачисления зарплат и плановые списания
+        dim = (date(d.year + d.month // 12, d.month % 12 + 1, 1) - timedelta(1)).day
+        season_m = 1.25 if d.day >= dim - 2 else (0.90 if d.day <= 2 else 1.0)
+        value = level * season_y * season_w * season_m * rnd.lognormvariate(0, 0.03)
+        ops = int(value / 0.042 * rnd.uniform(0.97, 1.03))
+        rows.append([d.isoformat(), f"{value:.1f}".replace(".", ","), ops])
+        d += timedelta(1)
+    write_csv(BASE / "series" / "portfolio_operations_daily.csv",
+              ["дата", "объём_операций_млн_руб", "число_операций"], rows)
+
+
+if __name__ == "__main__":
+    print("Генерация наборов данных:")
+    gen_product()
+    gen_clients()
+    gen_series()
+    print("Готово.")
