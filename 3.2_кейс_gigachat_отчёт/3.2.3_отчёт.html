@@ -2,13 +2,13 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Анализ накопительного счёта</title>
+    <title>Разведочный анализ данных</title>
     <style>
         body { font-family: Arial, sans-serif; }
         .container { max-width: 960px; margin: auto; padding-top: 20px; }
         h1 { text-align: center; color: #337ab7; }
         label { display: block; margin-bottom: 5px; }
-        select { width: 100%; height: 30px; border-radius: 4px; border: 1px solid #ccc; padding-left: 10px; box-sizing: border-box; }
+        input[type=file], select { width: 100%; height: 30px; border-radius: 4px; border: 1px solid #ccc; padding-left: 10px; box-sizing: border-box; }
         button { background-color: #337ab7; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 4px; transition: all 0.3s ease-in-out; }
         button:hover { background-color: #286090; }
         canvas { display: block; margin: 0 auto; }
@@ -20,365 +20,626 @@
         .card { background-color: #fff; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,.1); padding: 20px; margin-bottom: 20px; }
         .card-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
         .card-text { font-size: 14px; line-height: 1.5; }
+        .warning { color: red; font-style: italic; }
+        .correlation-matrix { border-spacing: 0; }
+        .correlation-matrix td { padding: 8px; text-align: right; }
+        .correlation-matrix td.positive { background-color: lightgreen; }
+        .correlation-matrix td.negative { background-color: pink; }
+        .correlation-matrix td.neutral { background-color: lightgrey; }
+        .tooltip { position: absolute; z-index: 1000; padding: 5px; background-color: black; color: white; opacity: 0; transition: opacity 0.3s; }
+        .tooltip.show { opacity: 1; }
+    .muted { color: #6B7580; font-size: 14px; }
+        .scrollbox { overflow-x: auto; }
+        select { margin-right: 8px; }
+        .link-btn { background: none; border: 0; color: #1B7FD6; cursor: pointer;
+                    text-decoration: underline; padding: 0; font-size: 14px; }
+        .correlation-matrix td { text-align: center; font-variant-numeric: tabular-nums; }
+        .correlation-matrix th { font-size: 12px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>Анализ накопительных счетов</h1>
-    
-    <!-- Загрузка файла -->
+    <h1>Разведочный анализ данных</h1>
+
+    <!-- Выбор файла -->
     <label for="fileInput">Выберите файл CSV:</label>
     <input type="file" id="fileInput"/>
-    
-    <!-- Итоговые карточки -->
-    <div class="row">
-        <div class="col-md-3 card">
-            <span class="card-title">Новые счета (за последний месяц)</span>
-            <p class="card-text"><strong><span id="newAccountsLastMonth"></span></strong></p>
-        </div>
-        
-        <div class="col-md-3 card">
-            <span class="card-title">Закрытые счета (за последний месяц)</span>
-            <p class="card-text"><strong><span id="closedAccountsLastMonth"></span></strong></p>
-        </div>
-        
-        <div class="col-md-3 card">
-            <span class="card-title">Активные счета (на конец последнего месяца)</span>
-            <p class="card-text"><strong><span id="activeAccountsLastMonth"></span></strong></p>
-        </div>
-        
-        <div class="col-md-3 card">
-            <span class="card-title">Изменение новых счетов (% к аналогичному месяцу прошлого года)</span>
-            <p class="card-text"><strong><span id="changeNewAccountsYearAgo"></span>%</strong></p>
-        </div>
+
+    <!-- Блок паспорта выгрузки -->
+    <div class="card">
+        <span class="card-title">Паспорт выгрузки</span>
+        <table id="passportTable">
+            <tr><td>Количество записей:</td><td id="recordCount"></td></tr>
+            <tr><td>Период:</td><td id="periodRange"></td></tr>
+            <tr><td>Численные показатели:</td><td id="numericColumns"></td></tr>
+            <tr><td>Текстовые срезы:</td><td id="categoryColumns"></td></tr>
+            <tr><td colspan="2" class="warning" id="missingValuesWarning"></td></tr>
+        </table>
     </div>
-    
-    <!-- Фильтрация -->
-    <select id="channelFilter">
-        <option value="">Все каналы</option>
-        <option value="Мобильное приложение">Мобильное приложение</option>
-        <option value="Отделение">Отделение</option>
-        <option value="Сайт банка">Сайт банка</option>
-        <option value="Партнёрская сеть">Партнёрская сеть</option>
-    </select>
-    
-    <select id="regionFilter">
-        <option value="">Все регионы</option>
-        <option value="Центральный">Центральный</option>
-        <option value="Северо-Западный">Северо-Западный</option>
-        <option value="Южный">Южный</option>
-        <option value="Уральский">Уральский</option>
-        <option value="Сибирский">Сибирский</option>
-    </select>
-    
-    <!-- Динамика открытия/закрытия счетов -->
-    <div class="plot"><canvas id="accountsChart"></canvas></div>
-    
-    <!-- Три отдельных графика по каналам -->
-    <div class="plot"><canvas id="newAccountsByChannel"></canvas></div>
-    <div class="plot"><canvas id="closeRatesByChannel"></canvas></div>
-    <div class="plot"><canvas id="avgBalancesByChannel"></canvas></div>
+
+    <!-- Корреляционная матрица -->
+    <div class="card">
+        <span class="card-title">Корреляция показателей</span>
+        <select id="corrmodeSelect">
+            <option value="between">Между показателями</option>
+            <option value="by_slice">По срезам</option>
+        </select>
+        <span id="sliceControls" style="display:none">
+            &nbsp; срез <select id="sliceSelect"></select>
+            &nbsp; показатель <select id="metricSelect"></select>
+        </span>
+        <p class="muted" id="matrixNote"></p>
+        <div class="scrollbox">
+          <table class="correlation-matrix" id="correlationMatrix"></table>
+        </div>
+        <p class="muted">Щёлкните по ячейке — под матрицей появится диаграмма
+           рассеяния этой пары.</p>
+        <div id="scatterPlotContainer"></div>
+    </div>
+
+    <!-- Сильнейшие связи -->
+    <div class="card">
+        <span class="card-title">Сильнейшие связи</span>
+        <ul id="strongestCorrelationsList"></ul>
+    </div>
+
+    <!-- Выбросы -->
+    <div class="card">
+        <span class="card-title">Выбросы</span>
+        <p>Отображаются первые 20 наиболее выраженных выбросов.</p>
+        <button id="showAllButton" style="display:none;">Показать все</button>
+        <table id="outliersTable">
+            <thead><tr><th>Срез</th><th>Значение среза</th><th>Показатель</th><th>Месяц</th><th>Значение</th><th>Отклонение от медианы</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <!-- График динамики -->
+    <div class="card">
+        <span class="card-title">Динамика</span>
+        <select id="timeseriesSelect"></select>
+        <select id="tsSliceSelect"></select>
+        <select id="tsValueSelect" style="display:none"></select>
+        <div class="plot"><canvas id="timeSeriesChart"></canvas></div>
+    </div>
 </div>
 
 <!-- Подключение актуальной версии Chart.js v4 -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
 <script>
-// ПРАВКА 1: разобранная выгрузка сохраняется, чтобы фильтры не перечитывали файл
-let ДАННЫЕ = [];
+// Основные переменные
+let DATA = [], CHARTS = {}, COLUMN_TYPES = {};
 
-document.getElementById('fileInput').addEventListener('change', function(event){
+// Функция загрузки файла
+document.getElementById('fileInput').addEventListener('change', function(event) {
     const file = event.target.files[0];
-    if (!file || !/\.(csv)$/.test(file.name)) return alert("Пожалуйста, выберите корректный CSV-файл.");
+    if (!file || !/\.(csv|txt)$/.test(file.name)) return alert("Пожалуйста, выберите корректный CSV-файл.");
 
     let reader = new FileReader();
     reader.onload = () => {
-        ДАННЫЕ = parseCSV(reader.result);
-        renderDashboard(ДАННЫЕ);
+        DATA = processFile(reader.result);
+        renderDashboard(DATA);
     };
     reader.readAsText(file);
 });
 
-function parseCSV(csvData) {
-    const rows = csvData.split("\n");
-    const headers = rows.shift().replace(/^\uFEFF/, "").split(";");
-    const parsedData = [];
+function processFile(content) {
+    const rows = content.split("\n").filter(r => r.trim());
+    const headers = rows.shift().split(";");
+    const result = [];
 
     rows.forEach(row => {
-        if(!row.trim()) return;
         const values = row.split(";");
         const obj = {};
-        headers.forEach((header, i) => {
-            obj[header.trim()] = values[i].trim();
+        headers.forEach((header, index) => {
+            obj[header.trim()] = values[index].trim();
         });
-        parsedData.push(obj);
+        result.push(obj);
     });
 
-    // Преобразование числовых значений
-    parsedData.forEach(item => {
-        item['новые_счета'] = Number(item['новые_счета'].replace(',', '.'));
-        item['закрытые_счета'] = Number(item['закрытые_счета'].replace(',', '.'));
-        item['активные_счета_на_конец_месяца'] = Number(item['активные_счета_на_конец_месяца'].replace(',', '.'));
-        item['средний_остаток_тыс_руб'] = Number(item['средний_остаток_тыс_руб'].replace(',', '.'));
+    // Определение типа колонок
+    COLUMN_TYPES = detectColumnTypes(result);
+    result.forEach(item => {
+        for (let col in COLUMN_TYPES) {
+            if (COLUMN_TYPES[col] === 'number') {
+                item[col] = Number(item[col].replace(',', '.'));
+            } else if (COLUMN_TYPES[col] === 'date') {
+                item[col] = new Date(item[col]);
+            }
+        }
     });
 
-    return parsedData;
+    return result;
 }
 
-// ПРАВКА 2: прежний график на холсте уничтожается, иначе Chart.js не рисует новый
-const ГРАФИКИ = {};
-
-function холст(id) {
-    if (ГРАФИКИ[id]) ГРАФИКИ[id].destroy();
-    return document.getElementById(id);
+// Автоматическое определение типов колонок
+function detectColumnTypes(data) {
+    const types = {};
+    const firstRow = data[0];
+    for (let col of Object.keys(firstRow)) {
+        if (/^(\d{4}-\d{2})$/i.test(firstRow[col])) {
+            types[col] = 'date'; // Месяцы формата ГГГГ-MM
+        } else if (!isNaN(Number(firstRow[col].replace(',', '.')))) {
+            types[col] = 'number';
+        } else {
+            types[col] = 'string';
+        }
+    }
+    return types;
 }
 
-// Рендеринг дашборда
+// Отрисовка основного интерфейса
 function renderDashboard(data) {
-    const filteredData = filterData(data);
-    const lastMonth = getLastMonth(filteredData);
-    const previousYearMonth = getPreviousYearMonth(lastMonth, filteredData);
-
-    updateCards(filteredData, lastMonth, previousYearMonth);
-    drawAccountsChart(filteredData);
-    drawChannelsCharts(filteredData);
+    заполнитьСписки();
+    showPassport(data);
+    buildCorrelationMatrix(data);
+    findStrongestCorrelations(data);
+    findOutliers(data);
+    drawTimeSeriesChart(data);
 }
 
-// Обновление карточек
-function updateCards(filteredData, lastMonth, previousYearMonth) {
-    const lastMonthData = aggregateByMonth(filteredData, lastMonth);
-    const previousYearMonthData = aggregateByMonth(filteredData, previousYearMonth);
+// Показываем паспорт выгрузки
+function showPassport(data) {
+    const count = data.length;
+    const minDate = formatDate(data[0]['месяц']);
+    const maxDate = formatDate(data[data.length - 1]['месяц']);
+    const numericCols = Object.keys(COLUMN_TYPES).filter(col => COLUMN_TYPES[col] === 'number');
+    const categoryCols = Object.keys(COLUMN_TYPES).filter(col => COLUMN_TYPES[col] === 'string' && col !== 'месяц');
 
-    document.getElementById('newAccountsLastMonth').textContent = Math.round(lastMonthData.new_accounts_sum);
-    document.getElementById('closedAccountsLastMonth').textContent = Math.round(lastMonthData.closed_accounts_sum);
-    document.getElementById('activeAccountsLastMonth').textContent = Math.round(lastMonthData.active_accounts_sum);
-    document.getElementById('changeNewAccountsYearAgo').textContent = calculatePercentageChange(previousYearMonthData.new_accounts_sum, lastMonthData.new_accounts_sum).toFixed(2);
+    document.getElementById('recordCount').innerHTML = count.toLocaleString();
+    document.getElementById('periodRange').innerHTML = `${minDate} — ${maxDate}`;
+    document.getElementById('numericColumns').innerHTML = numericCols.join(', ');
+    document.getElementById('categoryColumns').innerHTML = categoryCols.join(', ');
+
+    // Проверяем наличие пропущенных значений
+    const missingValues = checkMissingValues(data);
+    if (Object.values(missingValues).some(v => v > 0)) {
+        document.getElementById('missingValuesWarning').innerHTML = `Внимание! Есть пустые значения в следующих колонках: ${Object.entries(missingValues).map(([k,v]) => k + ': ' + v).join(', ')}.`;
+    }
 }
 
-// Агрегирование данных по месяцам
-function aggregateByMonth(data, month) {
-    const aggregatedData = data.filter(d => d['месяц'] === month)
-                               .reduce((acc, curr) => ({
-                                   new_accounts_sum: acc.new_accounts_sum + curr['новые_счета'],
-                                   closed_accounts_sum: acc.closed_accounts_sum + curr['закрытые_счета'],
-                                   active_accounts_sum: acc.active_accounts_sum + curr['активные_счета_на_конец_месяца']
-                               }), { new_accounts_sum: 0, closed_accounts_sum: 0, active_accounts_sum: 0 });
-    return aggregatedData;
+// Проверка наличия пропусков
+function checkMissingValues(data) {
+    const missingCounts = {};
+    for (let col of Object.keys(data[0])) {
+        missingCounts[col] = data.filter(row => isEmptyOrNull(row[col])).length;
+    }
+    return missingCounts;
 }
 
-// Получаем последний месяц
-function getLastMonth(data) {
-    return data.map(d => d['месяц']).sort().slice(-1)[0];
+// Форматируем даты
+function formatDate(dateObj) {
+    return dateObj instanceof Date ? dateObj.toISOString().substr(0, 7) : dateObj;
 }
 
-// Получаем аналогичный месяц предыдущего года
-function getPreviousYearMonth(currentMonth, data) {
-    const [year, month] = currentMonth.split('-');
-    const prevYearMonth = `${Number(year) - 1}-${month}`;
-    return data.some(d => d['месяц'] === prevYearMonth) ? prevYearMonth : null;
+// Функция проверки пустых значений
+function isEmptyOrNull(value) {
+    return value === "" || value === undefined || value === null;
 }
 
-// Расчет изменения в процентах
-function calculatePercentageChange(prevValue, currentValue) {
-    return (currentValue - prevValue) / prevValue * 100;
+
+// ПРАВКА 1. Корреляции считались по всем строкам выгрузки, где перемешаны
+// регионы и каналы: коэффициент измерял различия между срезами, а не связь
+// показателей. Всё, что касается связи, считается на месячных итогах.
+// Правило свёртки: объёмные показатели складываются, ставки и средние —
+// усредняются, иначе «средний остаток» превратился бы в сумму средних.
+function усредняется(колонка) {
+    return /средн|ставка|проц|доля|_на_/i.test(колонка);
 }
 
-// Фильтруем данные по фильтру региона и канала
-function filterData(data) {
-    const selectedChannel = document.getElementById('channelFilter').value;
-    const selectedRegion = document.getElementById('regionFilter').value;
-
-    return data.filter(d => (
-        (selectedChannel === '' || d['канал'] === selectedChannel) &&
-        (selectedRegion === '' || d['регион'] === selectedRegion)
-    ));
-}
-
-// Построение графика динамики открытия/закрытия счетов
-function drawAccountsChart(filteredData) {
-    const groupedData = groupAndAggregate(filteredData);
-    const months = Object.keys(groupedData);
-    const newAccounts = months.map(m => groupedData[m].new_accounts_sum);
-    const closedAccounts = months.map(m => groupedData[m].closed_accounts_sum);
-
-    const accountsCtx = холст('accountsChart');
-    ГРАФИКИ['accountsChart'] = new Chart(accountsCtx, {
-        type: 'line',
-        data: {
-            labels: months,
-            datasets: [
-                {
-                    label: 'Открытие счетов',
-                    data: newAccounts,
-                    fill: false,
-                    borderColor: '#337ab7'
-                },
-                {
-                    label: 'Закрытие счетов',
-                    data: closedAccounts,
-                    fill: false,
-                    borderColor: '#d9534f'
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: 'Динамика открытия и закрытия счетов'
-                },
-                tooltip: {}
-            },
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
+function сводкаПоМесяцам(data, дополнительныйКлюч) {
+    // ПРАВКА 2. Месяц разобран в объект даты, а объекты дат не сравниваются
+    // между собой: уникальные месяцы не схлопывались, и сводная по срезу
+    // получалась в четыре раза длиннее, чем нужно, с пустыми ячейками.
+    // Внутри расчётов месяц всегда строка вида ГГГГ-ММ.
+    const числовые = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'number');
+    const группы = {};
+    data.forEach(строка => {
+        const месяц = formatDate(строка['месяц']);
+        const ключ = дополнительныйКлюч
+            ? месяц + '\u0000' + строка[дополнительныйКлюч]
+            : месяц;
+        if (!группы[ключ]) группы[ключ] = [];
+        группы[ключ].push(строка);
+    });
+    return Object.keys(группы).sort().map(ключ => {
+        const строки = группы[ключ];
+        const итог = {'месяц': formatDate(строки[0]['месяц'])};
+        if (дополнительныйКлюч) итог[дополнительныйКлюч] = строки[0][дополнительныйКлюч];
+        числовые.forEach(колонка => {
+            const значения = строки.map(с => с[колонка]).filter(v => v != null && !isNaN(v));
+            const сумма = значения.reduce((a, b) => a + b, 0);
+            итог[колонка] = усредняется(колонка) ? сумма / значения.length : сумма;
+        });
+        return итог;
     });
 }
 
-// Группировка и агрегирование данных по месяцам
-function groupAndAggregate(data) {
-    return data.reduce((grouped, record) => {
-        const key = record['месяц'];
-        if (!grouped[key]) {
-            grouped[key] = { new_accounts_sum: 0, closed_accounts_sum: 0 };
-        }
-        grouped[key].new_accounts_sum += record['новые_счета'];
-        grouped[key].closed_accounts_sum += record['закрытые_счета'];
-        return grouped;
-    }, {});
+// сводная «месяц × значение среза» по одному показателю
+function своднаяПоСрезу(data, срез, показатель) {
+    const помесячно = сводкаПоМесяцам(data, срез);
+    const значения = [...new Set(помесячно.map(с => с[срез]))].sort();
+    const месяцы = [...new Set(помесячно.map(с => с['месяц']))].sort();
+    const строки = месяцы.map(месяц => {
+        const строка = {'месяц': месяц};
+        значения.forEach(зн => {
+            const найдено = помесячно.find(с => с['месяц'] === месяц && с[срез] === зн);
+            строка[зн] = найдено ? найдено[показатель] : null;
+        });
+        return строка;
+    });
+    return {строки: строки, колонки: значения};
 }
 
-// Построение графиков по каждому каналу отдельно
-function drawChannelsCharts(filteredData) {
-    const channels = [...new Set(filteredData.map(d => d['канал']))];
+// Строим корреляционную матрицу
+function buildCorrelationMatrix(data) {
+    const mode = document.getElementById('corrmodeSelect').value;
+    const срезы = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'string');
+    const числовые = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'number');
+    const наборы = document.getElementById('sliceControls');
+    наборы.style.display = mode === 'by_slice' ? 'inline' : 'none';
 
-    // Новые счета по каналам
-    const newAccountsByChannel = channels.map(c => 
-        filteredData.filter(d => d['канал'] === c)
-                   .reduce((sum, d) => sum + d['новые_счета'], 0)
+    if (mode === 'between') {
+        const помесячно = сводкаПоМесяцам(data);
+        const matrix = computeCorrelationMatrix(помесячно, числовые);
+        renderCorrelationMatrix(matrix, числовые, помесячно);
+        подписьМатрицы('Связь показателей между собой на месячных итогах: '
+            + помесячно.length + ' наблюдений');
+    } else {
+        // ПРАВКА 3. Режим «по срезам» открывал модальное окно и строил матрицу
+        // показателей внутри среза. Нужно другое: как связаны между собой
+        // значения одного среза по динамике одного показателя.
+        const срез = document.getElementById('sliceSelect').value || срезы[0];
+        const показатель = document.getElementById('metricSelect').value || числовые[0];
+        const сводная = своднаяПоСрезу(data, срез, показатель);
+        const matrix = computeCorrelationMatrix(сводная.строки, сводная.колонки);
+        renderCorrelationMatrix(matrix, сводная.колонки, сводная.строки);
+        подписьМатрицы('Связь между значениями среза «' + срез + '» по показателю «'
+            + показатель + '»: ' + сводная.строки.length + ' месяцев');
+    }
+}
+
+function подписьМатрицы(текст) {
+    document.getElementById('matrixNote').textContent = текст;
+}
+
+function заполнитьСписки() {
+    const срезы = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'string');
+    const числовые = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'number');
+    const s = document.getElementById('sliceSelect'), m = document.getElementById('metricSelect');
+    s.innerHTML = ''; m.innerHTML = '';
+    срезы.forEach(c => s.add(new Option(c, c)));
+    числовые.forEach(c => m.add(new Option(c, c)));
+    s.onchange = m.onchange = () => buildCorrelationMatrix(DATA);
+}
+
+// Рендеринг корреляционной матрицы
+function renderCorrelationMatrix(matrix, cols, основа) {
+    const matrixEl = document.getElementById('correlationMatrix');
+    matrixEl.innerHTML = '';
+
+    const headerRow = document.createElement('tr');
+    headerRow.appendChild(document.createElement('th'));
+    cols.forEach(col => {
+        const cell = document.createElement('th');
+        cell.textContent = col;
+        headerRow.appendChild(cell);
+    });
+    matrixEl.appendChild(headerRow);
+
+    cols.forEach((rowCol, ri) => {
+        const row = document.createElement('tr');
+        const nameCell = document.createElement('td');
+        nameCell.textContent = rowCol;
+        row.appendChild(nameCell);
+
+        cols.forEach((col, ci) => {
+            const cell = document.createElement('td');
+            // ПРАВКА 4. Классов было три, и матрица читалась ступеньками.
+            // Насыщенность фона теперь пропорциональна силе связи.
+            const v = matrix[ri][ci];
+            const сила = Math.min(1, Math.abs(v));
+            cell.style.background = v >= 0
+                ? 'rgba(32,186,114,' + (0.08 + 0.72 * сила) + ')'
+                : 'rgba(228,87,46,' + (0.08 + 0.72 * сила) + ')';
+            cell.style.color = сила > 0.62 ? '#fff' : '#2E3641';
+            cell.style.cursor = 'pointer';
+            cell.title = `${rowCol} vs ${col}: ${matrix[ri][ci].toFixed(2)}`;
+            cell.textContent = matrix[ri][ci].toFixed(2);
+            cell.addEventListener('click', () => scatterPlot(основа, rowCol, col));
+            row.appendChild(cell);
+        });
+        matrixEl.appendChild(row);
+    });
+}
+
+// Класс ячейки корреляционной матрицы
+function getCorrelationClass(correlation) {
+    if (Math.abs(correlation) >= 0.7) return correlation > 0 ? 'positive' : 'negative';
+    if (Math.abs(correlation) >= 0.3) return 'neutral';
+    return '';
+}
+
+// Вычисление корреляционной матрицы
+function computeCorrelationMatrix(data, columns) {
+    const n = columns.length;
+    const matrix = Array.from({ length: n }, () => Array(n).fill(0));
+
+    for (let i = 0; i < n; i++) {
+        for (let j = i; j < n; j++) {
+            const x = data.map(row => row[columns[i]]).filter(val => val != null);
+            const y = data.map(row => row[columns[j]]).filter(val => val != null);
+            matrix[i][j] = pearsonCorrelation(x, y);
+            matrix[j][i] = matrix[i][j]; // Симметричная матрица
+        }
+    }
+    return matrix;
+}
+
+// Коэффициент Пирсона
+function pearsonCorrelation(x, y) {
+    const meanX = average(x), meanY = average(y);
+    const numerator = x.map((_, i) => (x[i] - meanX) * (y[i] - meanY)).reduce((a,b) => a+b, 0);
+    const denominator = Math.sqrt(
+        x.map(xi => Math.pow(xi - meanX, 2)).reduce((a,b) => a+b, 0) *
+        y.map(yi => Math.pow(yi - meanY, 2)).reduce((a,b) => a+b, 0)
     );
+    return denominator === 0 ? 0 : numerator / denominator;
+}
 
-    const newAccountsCtx = холст('newAccountsByChannel');
-    ГРАФИКИ['newAccountsByChannel'] = new Chart(newAccountsCtx, {
-        type: 'bar',
-        data: {
-            labels: channels,
-            datasets: [
-                {
-                    label: 'Новых счетов за период',
-                    data: newAccountsByChannel,
-                    backgroundColor: '#337ab7'
-                }
-            ]
-        },
+// Средняя величина массива
+function average(arr) {
+    return arr.reduce((a,b) => a+b, 0) / arr.length;
+}
+
+// Поиск сильнейших связей
+// ПРАВКА 6. Клик по ячейке матрицы вызывал scatterPlot, но самой функции
+// в ответе не было: в консоли ошибка, под матрицей ничего не появлялось.
+function scatterPlot(data, xCol, yCol) {
+    const ctx = document.getElementById('scatterPlotContainer');
+    ctx.innerHTML = '';
+    if (xCol === yCol) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'plot';
+    const chartCanvas = document.createElement('canvas');
+    wrap.appendChild(chartCanvas);
+    ctx.appendChild(wrap);
+
+    const точки = data.map(row => ({x: row[xCol], y: row[yCol]}))
+                      .filter(p => p.x != null && p.y != null && !isNaN(p.x) && !isNaN(p.y));
+    const r = pearsonCorrelation(точки.map(p => p.x), точки.map(p => p.y));
+
+    if (CHARTS.scatter) CHARTS.scatter.destroy();
+    CHARTS.scatter = new Chart(chartCanvas, {
+        type: 'scatter',
+        data: {datasets: [{data: точки, backgroundColor: 'rgba(27,127,214,.65)',
+                           pointRadius: 5}]},
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: 'Сравнительная динамика новых счетов по каналам'
-                },
-                tooltip: {},
-                legend: { display: false }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
+            responsive: true, maintainAspectRatio: false,
+            scales: {x: {type: 'linear', title: {display: true, text: xCol}},
+                     y: {type: 'linear', title: {display: true, text: yCol}}},
+            plugins: {legend: {display: false},
+                      title: {display: true,
+                              text: xCol + ' и ' + yCol + ': коэффициент ' + r.toFixed(2)}}
         }
     });
 
-    // Процент закрытий по каналам
-    const closeRatesByChannel = channels.map(c => {
-        const channelData = filteredData.filter(d => d['канал'] === c);
-        const totalOpened = channelData.reduce((sum, d) => sum + d['новые_счета'], 0);
-        const totalClosed = channelData.reduce((sum, d) => sum + d['закрытые_счета'], 0);
-        return totalOpened > 0 ? (totalClosed / totalOpened * 100).toFixed(2) : 0;
-    });
+    // ПРАВКА 6. Коэффициент выводился числом без единого слова о том,
+    // что он означает и чего не означает.
+    const пояснение = document.createElement('p');
+    пояснение.className = 'muted';
+    пояснение.innerHTML = 'Каждая точка — один месяц. <b>' + силаСловами(r)
+        + '</b>: коэффициент ' + r.toFixed(2)
+        + '. Связь не означает причину: оба показателя могут зависеть от третьего.';
+    ctx.appendChild(пояснение);
+}
 
-    const closeRatesCtx = холст('closeRatesByChannel');
-    ГРАФИКИ['closeRatesByChannel'] = new Chart(closeRatesCtx, {
-        type: 'bar',
-        data: {
-            labels: channels,
-            datasets: [
-                {
-                    label: '% Закрытий к открытию',
-                    data: closeRatesByChannel,
-                    backgroundColor: '#d9534f'
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: 'Процент закрытий по каналам'
-                },
-                tooltip: {},
-                legend: { display: false }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
+function findStrongestCorrelations(data) {
+    // ПРАВКА 5. Список считался по строкам выгрузки и не давал открыть пару.
+    const помесячно = сводкаПоМесяцам(data);
+    const числовые = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'number');
+    const matrix = computeCorrelationMatrix(помесячно, числовые);
+
+    const пары = [];
+    for (let i = 0; i < числовые.length; i++) {
+        for (let j = i + 1; j < числовые.length; j++) {
+            пары.push({a: числовые[i], b: числовые[j], r: matrix[i][j]});
         }
-    });
+    }
+    пары.sort((x, y) => Math.abs(y.r) - Math.abs(x.r));
 
-    // Средние остатки по каналам
-    const avgBalancesByChannel = channels.map(c => {
-        const channelData = filteredData.filter(d => d['канал'] === c);
-        const totalBalance = channelData.reduce((sum, d) => sum + d['средний_остаток_тыс_руб'], 0);
-        return channelData.length > 0 ? (totalBalance / channelData.length).toFixed(2) : 0;
-    });
-
-    const avgBalancesCtx = холст('avgBalancesByChannel');
-    ГРАФИКИ['avgBalancesByChannel'] = new Chart(avgBalancesCtx, {
-        type: 'bar',
-        data: {
-            labels: channels,
-            datasets: [
-                {
-                    label: 'Средний остаток (тыс руб)',
-                    data: avgBalancesByChannel,
-                    backgroundColor: '#5cb85c'
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: 'Средние остатки по каналам'
-                },
-                tooltip: {},
-                legend: { display: false }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
+    const listEl = document.getElementById('strongestCorrelationsList');
+    listEl.innerHTML = '';
+    пары.slice(0, 7).forEach(пара => {
+        const li = document.createElement('li');
+        const знак = пара.r > 0 ? 'вместе растут и падают' : 'меняются в разные стороны';
+        li.innerHTML = '<b>' + пара.r.toFixed(2) + '</b> — ' + пара.a + ' и ' + пара.b
+            + ' <span class="muted">(' + силаСловами(пара.r) + ', ' + знак + ')</span> ';
+        const btn = document.createElement('button');
+        btn.textContent = 'показать';
+        btn.className = 'link-btn';
+        btn.onclick = () => scatterPlot(помесячно, пара.a, пара.b);
+        li.appendChild(btn);
+        listEl.appendChild(li);
     });
 }
 
-// Добавляем обработчики событий для фильтров
-document.querySelectorAll('#channelFilter, #regionFilter').forEach(select => {
-    select.addEventListener('change', () => {
-        if (ДАННЫЕ.length) renderDashboard(ДАННЫЕ);
+function силаСловами(r) {
+    const a = Math.abs(r);
+    if (a >= 0.7) return 'сильная связь';
+    if (a >= 0.5) return 'заметная связь';
+    if (a >= 0.3) return 'умеренная связь';
+    return 'связи практически нет';
+}
+
+// Поиск выбросов
+function findOutliers(data) {
+    const numericCols = Object.keys(COLUMN_TYPES).filter(col => COLUMN_TYPES[col] === 'number');
+    const sliceCols = Object.keys(COLUMN_TYPES).filter(col => COLUMN_TYPES[col] === 'string');
+
+    const outliers = [];
+    sliceCols.forEach(sliceCol => {
+        const uniqueSlices = [...new Set(data.map(row => row[sliceCol]))];
+        uniqueSlices.forEach(uniqueVal => {
+            numericCols.forEach(numericCol => {
+                const subset = data.filter(row => row[sliceCol] === uniqueVal);
+                const values = subset.map(row => row[numericCol]).filter(val => val != null);
+                const q1 = quantile([...values], 0.25), q3 = quantile([...values], 0.75);
+                const iqr = q3 - q1;
+                const lowerBound = q1 - 1.5*iqr, upperBound = q3 + 1.5*iqr;
+                const median = quantile([...values], 0.5);
+
+                subset.forEach(row => {
+                    const val = row[numericCol];
+                    if ((val < lowerBound || val > upperBound) && val != null) {
+                        outliers.push({
+                            slice: sliceCol,
+                            sliceValue: uniqueVal,
+                            metric: numericCol,
+                            month: formatDate(row['месяц']),
+                            value: val,
+                            deviationFactor: Math.abs((val - median)/median)
+                        });
+                    }
+                });
+            });
+        });
     });
+
+    outliers.sort((a,b) => b.deviationFactor - a.deviationFactor);
+
+    const tbody = document.getElementById('outliersTable').querySelector('tbody');
+    tbody.innerHTML = '';
+    outliers.slice(0, 20).forEach(outlier => {
+        const tr = document.createElement('tr');
+        ['slice', 'sliceValue', 'metric', 'month', 'value', 'deviationFactor'].forEach(key => {
+            const td = document.createElement('td');
+            td.textContent = key === 'deviationFactor' 
+                             ? `${outlier[key].toFixed(2)}×`
+                             : outlier[key];
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+
+    if (outliers.length > 20) {
+        document.getElementById('showAllButton').style.display = 'block';
+        document.getElementById('showAllButton').onclick = () => {
+            tbody.innerHTML = '';
+            outliers.forEach(outlier => {
+                const tr = document.createElement('tr');
+                ['slice', 'sliceValue', 'metric', 'month', 'value', 'deviationFactor'].forEach(key => {
+                    const td = document.createElement('td');
+                    td.textContent = key === 'deviationFactor'
+                                     ? `${outlier[key].toFixed(2)}×`
+                                     : outlier[key];
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+        };
+    } else {
+        document.getElementById('showAllButton').style.display = 'none';
+    }
+}
+
+// Квантили
+function quantile(arr, p) {
+    const sortedArr = [...arr].sort((a,b) => a-b);
+    const pos = (sortedArr.length - 1) * p;
+    const base = Math.floor(pos);
+    const rest = pos - base;
+    if (base + 1 < sortedArr.length) {
+        return sortedArr[base] + rest * (sortedArr[base + 1] - sortedArr[base]);
+    } else {
+        return sortedArr[base];
+    }
+}
+
+// Временной ряд
+function drawTimeSeriesChart(data) {
+    // ПРАВКА 7. График строился по 480 строкам выгрузки: на одну подпись
+    // месяца приходилось двадцать точек. Ряд собирается из месячных итогов,
+    // а точки-выбросы подсвечиваются — ради них инструмент и открывают.
+    const числовые = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'number');
+    const срезы = Object.keys(COLUMN_TYPES).filter(c => COLUMN_TYPES[c] === 'string');
+    const select = document.getElementById('timeseriesSelect');
+    const срезSelect = document.getElementById('tsSliceSelect');
+    const значSelect = document.getElementById('tsValueSelect');
+    if (!select.options.length) {
+        числовые.forEach(c => select.add(new Option(c, c)));
+        срезSelect.add(new Option('вся выгрузка', ''));
+        срезы.forEach(c => срезSelect.add(new Option('по срезу: ' + c, c)));
+    }
+
+    function заполнитьЗначения() {
+        const срез = срезSelect.value;
+        значSelect.innerHTML = '';
+        значSelect.style.display = срез ? 'inline' : 'none';
+        if (!срез) return;
+        [...new Set(data.map(с => с[срез]))].sort()
+            .forEach(v => значSelect.add(new Option(v, v)));
+    }
+
+    function перерисовать() {
+        const показатель = select.value;
+        const срез = срезSelect.value;
+        const выбранное = значSelect.value;
+        const выборка = срез && выбранное
+            ? data.filter(с => с[срез] === выбранное) : data;
+        const помесячно = сводкаПоМесяцам(выборка);
+        const значения = помесячно.map(с => с[показатель]);
+        const границы = границыВыброса(значения);
+        const цвета = значения.map(v => (v < границы.низ || v > границы.верх)
+            ? '#E4572E' : 'rgba(27,127,214,.9)');
+        const радиусы = значения.map(v => (v < границы.низ || v > границы.верх) ? 7 : 3);
+
+        if (CHARTS.timeSeries) CHARTS.timeSeries.destroy();
+        CHARTS.timeSeries = new Chart(document.getElementById('timeSeriesChart'), {
+            type: 'line',
+            data: {
+                labels: помесячно.map(с => с['месяц']),
+                datasets: [{
+                    label: показатель, data: значения, fill: false,
+                    borderColor: 'rgba(27,127,214,.9)', tension: 0.2,
+                    pointBackgroundColor: цвета, pointBorderColor: цвета,
+                    pointRadius: радиусы, pointHoverRadius: 9
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: {y: {beginAtZero: true}},
+                plugins: {
+                    legend: {display: false},
+                    title: {display: true, text: показатель
+                        + (срез && выбранное ? ' · ' + выбранное : ' · вся выгрузка')
+                        + ' по месяцам, выбросы выделены'}
+                }
+            }
+        });
+    }
+
+    select.onchange = перерисовать;
+    срезSelect.onchange = () => { заполнитьЗначения(); перерисовать(); };
+    значSelect.onchange = перерисовать;
+    заполнитьЗначения();
+    перерисовать();
+}
+
+function границыВыброса(значения) {
+    const чистые = значения.filter(v => v != null && !isNaN(v));
+    const q1 = quantile(чистые, 0.25), q3 = quantile(чистые, 0.75);
+    const iqr = q3 - q1;
+    return {низ: q1 - 1.5 * iqr, верх: q3 + 1.5 * iqr};
+}
+
+// Обработчик изменения режима корреляций
+document.getElementById('corrmodeSelect').onchange = () => {
+    buildCorrelationMatrix(DATA);
+};
+
+window.addEventListener('resize', () => {
+    Object.values(CHARTS).forEach(chart => chart.resize());
 });
 </script>
 </body>
