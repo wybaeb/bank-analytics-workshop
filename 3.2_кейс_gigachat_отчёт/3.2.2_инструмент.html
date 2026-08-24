@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Разведочный анализ банковских выгрузок</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<style>
+    body {
+        font-family: Arial, Helvetica, sans-serif;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 20px;
+        color: #1a1a1a;
+        background: #ffffff;
+    }
+    h1 {
+        font-size: 22px;
+    }
+    h2 {
+        font-size: 18px;
+        margin-top: 40px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 6px;
+    }
+    .section {
+        margin-top: 20px;
+    }
+    .controls label {
+        margin-right: 8px;
+        font-weight: bold;
+    }
+    .controls select {
+        margin-right: 20px;
+        margin-bottom: 10px;
+    }
+    table {
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+    table th, table td {
+        border: 1px solid #ccc;
+        padding: 6px 10px;
+        text-align: center;
+        font-size: 13px;
+    }
+    .matrix-table td {
+        cursor: pointer;
+    }
+    .matrix-table td:hover {
+        outline: 2px solid #2a5db0;
+    }
+    #outliersTable table th, #outliersTable table td {
+        text-align: left;
+    }
+    .warning {
+        color: #b02020;
+        font-weight: bold;
+    }
+    .chart-container {
+        position: relative;
+        width: 100%;
+        height: 400px;
+        margin-top: 10px;
+    }
+    #matrixInfo {
+        font-style: italic;
+        color: #444;
+    }
+    #scatterNote {
+        margin-top: 8px;
+    }
+    ul {
+        padding-left: 20px;
+    }
+    button {
+        cursor: pointer;
+    }
+</style>
+</head>
+<body>
+
+<h1>Разведочный анализ банковских выгрузок</h1>
+
+<div class="section">
+    <label for="fileInput">Загрузите CSV-файл выгрузки:</label><br>
+    <input type="file" id="fileInput" accept=".csv">
+</div>
+
+<div class="section" id="passport"></div>
+
+<div class="section" id="matrixSection">
+    <h2>Матрица корреляций</h2>
+    <div class="controls">
+        <label for="matrixMode">Режим:</label>
+        <select id="matrixMode">
+            <option value="metrics">между показателями</option>
+            <option value="slice">по срезу</option>
+        </select>
+        <span id="sliceControls" style="display:none;">
+            <label for="sliceSelect">Срез:</label>
+            <select id="sliceSelect"></select>
+            <label for="metricSelect">Показатель:</label>
+            <select id="metricSelect"></select>
+        </span>
+    </div>
+    <div id="matrixInfo"></div>
+    <div id="matrixContainer"></div>
+
+    <h2>Диаграмма рассеяния</h2>
+    <div class="chart-container">
+        <canvas id="scatterChart"></canvas>
+    </div>
+    <div id="scatterNote"></div>
+</div>
+
+<div class="section" id="topCorrelations"></div>
+
+<div class="section" id="outliersSection">
+    <h2>Выбросы</h2>
+    <div id="outliersTable"></div>
+    <button id="showMoreOutliers" style="display:none;">Показать все</button>
+</div>
+
+<div class="section" id="dynamicsSection">
+    <h2>Динамика</h2>
+    <div class="controls">
+        <label for="dynMetric">Показатель:</label>
+        <select id="dynMetric"></select>
+        <label for="dynSlice">Срез:</label>
+        <select id="dynSlice"></select>
+        <label for="dynSliceValue">Значение среза:</label>
+        <select id="dynSliceValue"></select>
+    </div>
+    <div class="chart-container">
+        <canvas id="dynamicsChart"></canvas>
+    </div>
+</div>
+
+<script>
+
+function num(value) {
+    if (value === undefined || value === null) return NaN;
+    return parseFloat(String(value).trim().replace(/\s/g, '').replace(',', '.'));
+}
+
+function parseCSV(text) {
+    const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+    const headers = lines.shift().split(';').map(h => h.trim());
+    return lines.map(line => {
+        const parts = line.split(';');
+        const row = {};
+        headers.forEach((h, i) => { row[h] = (parts[i] || '').trim(); });
+        return row;   // все значения — строки, числами занимается num()
+    });
+}
+
+function detectTypes(rows) {
+    const types = {};
+    Object.keys(rows[0]).forEach(col => {
+        const sample = rows.slice(0, 50).map(r => r[col]).filter(v => v !== '');
+        if (sample.every(v => /^\d{4}-\d{2}$/.test(v))) types[col] = 'month';
+        else if (sample.every(v => !isNaN(num(v)))) types[col] = 'metric';
+        else types[col] = 'slice';
+    });
+    return types;
+}
+
+function isAverageMetric(col) {
+    return /средн|ставка|проц|доля/i.test(col);
+}
+
+function aggregateMonths(rows, types, sliceCol) {
+    const monthColName = Object.keys(types).find(c => types[c] === 'month');
+    const metrics = Object.keys(types).filter(c => types[c] === 'metric');
+    const groups = {};
+    rows.forEach(row => {
+        const month = row[monthColName];
+        const sliceValue = sliceCol ? row[sliceCol] : null;
+        const key = sliceCol ? (month + '|' + sliceValue) : month;
+        if (!groups[key]) {
+            groups[key] = { month: month, slice: sliceValue, sums: {}, counts: {} };
+            metrics.forEach(m => { groups[key].sums[m] = 0; groups[key].counts[m] = 0; });
+        }
+        const g = groups[key];
+        metrics.forEach(m => {
+            const v = num(row[m]);
+            if (!isNaN(v)) {
+                g.sums[m] += v;
+                g.counts[m] += 1;
+            }
+        });
+    });
+    return Object.values(groups).map(g => {
+        const result = { month: g.month };
+        if (sliceCol) result.slice = g.slice;
+        metrics.forEach(m => {
+            const count = g.counts[m];
+            if (count === 0) {
+                result[m] = NaN;
+                return;
+            }
+            result[m] = isAverageMetric(m) ? (g.sums[m] / count) : g.sums[m];
+        });
+        return result;
+    });
+}
+
+function corr(x, y) {
+    const xs = [];
+    const ys = [];
+    for (let i = 0; i < x.length; i++) {
+        if (!isNaN(x[i]) && !isNaN(y[i])) {
+            xs.push(x[i]);
+            ys.push(y[i]);
+        }
+    }
+    const n = xs.length;
+    if (n === 0) return 0;
+    const mx = xs.reduce((a, b) => a + b, 0) / n;
+    const my = ys.reduce((a, b) => a + b, 0) / n;
+    let sumXY = 0, sumX2 = 0, sumY2 = 0;
+    for (let i = 0; i < n; i++) {
+        const dx = xs[i] - mx;
+        const dy = ys[i] - my;
+        sumXY += dx * dy;
+        sumX2 += dx * dx;
+        sumY2 += dy * dy;
+    }
+    const denom = Math.sqrt(sumX2 * sumY2);
+    if (denom === 0) return 0;
+    return sumXY / denom;
+}
+
+function buildMatrix(rows, cols) {
+    return cols.map(colA => cols.map(colB => corr(
+        rows.map(r => r[colA]),
+        rows.map(r => r[colB])
+    )));
+}
+
+function buildPivot(rows, types, sliceCol, metric) {
+    const agg = aggregateMonths(rows, types, sliceCol);
+    const cols = [...new Set(agg.map(r => r.slice))].sort();
+    const months = [...new Set(agg.map(r => r.month))].sort();
+    const pivotRows = months.map(month => {
+        const rec = { month: month };
+        cols.forEach(c => {
+            const found = agg.find(r => r.month === month && r.slice === c);
+            rec[c] = found ? found[metric] : NaN;
+        });
+        return rec;
+    });
+    return { rows: pivotRows, cols: cols };
+}
+
+function quantile(values, p) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+function detectOutliers(rows, types) {
+    const sliceColumns = Object.keys(types).filter(c => types[c] === 'slice');
+    const metrics = Object.keys(types).filter(c => types[c] === 'metric');
+    const result = [];
+    sliceColumns.forEach(sliceCol => {
+        const sliceValues = [...new Set(rows.map(r => r[sliceCol]))];
+        const agg = aggregateMonths(rows, types, sliceCol);
+        sliceValues.forEach(sliceValue => {
+            metrics.forEach(metric => {
+                const series = agg
+                    .filter(r => r.slice === sliceValue && !isNaN(r[metric]))
+                    .map(r => ({ month: r.month, value: r[metric] }));
+                if (series.length === 0) return;
+                const nums = series.map(s => s.value);
+                const q1 = quantile(nums, 0.25);
+                const q3 = quantile(nums, 0.75);
+                const iqr = q3 - q1;
+                const lower = q1 - 1.5 * iqr;
+                const upper = q3 + 1.5 * iqr;
+                const median = quantile(nums, 0.5);
+                series.forEach(point => {
+                    if (point.value < lower || point.value > upper) {
+                        const ratio = median !== 0 ? (point.value / median) : 0;
+                        result.push({
+                            slice: sliceCol,
+                            sliceValue: sliceValue,
+                            metric: metric,
+                            month: point.month,
+                            value: point.value,
+                            ratio: ratio
+                        });
+                    }
+                });
+            });
+        });
+    });
+    return result;
+}
+
+function strengthWord(value) {
+    const abs = Math.abs(value);
+    if (abs >= 0.7) return 'сильная';
+    if (abs >= 0.4) return 'заметная';
+    if (abs >= 0.2) return 'умеренная';
+    return 'связи практически нет';
+}
+
+function directionWord(value) {
+    if (value > 0) return 'прямая';
+    if (value < 0) return 'обратная';
+    return 'нет направления';
+}
+
+function describeCorrelation(value) {
+    const strength = strengthWord(value);
+    if (strength === 'связи практически нет') {
+        return 'Связь между показателями: ' + strength + '.';
+    }
+    return 'Связь между показателями ' + strength + ', направление ' + directionWord(value) + '.';
+}
+
+function cellColor(value) {
+    const abs = Math.min(Math.abs(value), 1);
+    if (value >= 0) {
+        return 'rgba(30, 120, 60, ' + abs.toFixed(2) + ')';
+    }
+    return 'rgba(190, 30, 30, ' + abs.toFixed(2) + ')';
+}
+
+let rawRows = [];
+let colTypes = {};
+let metricCols = [];
+let sliceCols = [];
+let aggregatedByMonth = [];
+let currentMatrixCols = [];
+let currentMatrixData = [];
+let currentMatrixRows = [];
+let outliersAll = [];
+let outliersShown = 20;
+let scatterChartInstance = null;
+let dynamicsChartInstance = null;
+
+function renderPassport() {
+    const container = document.querySelector('#passport');
+    container.textContent = '';
+
+    const title = document.createElement('h2');
+    title.textContent = 'Паспорт выгрузки';
+    container.appendChild(title);
+
+    const months = [...aggregatedByMonth.map(r => r.month)].sort();
+    const first = months[0];
+    const last = months[months.length - 1];
+
+    const info = document.createElement('p');
+    info.textContent = 'Строк в выгрузке: ' + rawRows.length + '. Период: ' + first + ' — ' + last + '.';
+    container.appendChild(info);
+
+    const metricsInfo = document.createElement('p');
+    metricsInfo.textContent = 'Показатели: ' + metricCols.join(', ') + '.';
+    container.appendChild(metricsInfo);
+
+    const slicesTitle = document.createElement('p');
+    slicesTitle.textContent = 'Срезы:';
+    container.appendChild(slicesTitle);
+
+    const slicesList = document.createElement('ul');
+    sliceCols.forEach(sc => {
+        const uniq = new Set(rawRows.map(r => r[sc]));
+        const li = document.createElement('li');
+        li.textContent = sc + ': ' + uniq.size + ' значений';
+        slicesList.appendChild(li);
+    });
+    container.appendChild(slicesList);
+
+    metricCols.forEach(mc => {
+        const missing = rawRows.filter(r => String(r[mc]).trim() === '').length;
+        if (missing > 0) {
+            const w = document.createElement('p');
+            w.className = 'warning';
+            w.textContent = 'Внимание: в колонке «' + mc + '» пропущено значений: ' + missing + '.';
+            container.appendChild(w);
+        }
+    });
+}
+
+function drawMatrixTable(cols, matrix) {
+    const container = document.querySelector('#matrixContainer');
+    container.textContent = '';
+    const table = document.createElement('table');
+    table.className = 'matrix-table';
+
+    const headRow = document.createElement('tr');
+    headRow.appendChild(document.createElement('th'));
+    cols.forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c;
+        headRow.appendChild(th);
+    });
+    table.appendChild(headRow);
+
+    cols.forEach((rowName, i) => {
+        const tr = document.createElement('tr');
+        const th = document.createElement('th');
+        th.textContent = rowName;
+        tr.appendChild(th);
+        cols.forEach((colName, j) => {
+            const value = matrix[i][j];
+            const td = document.createElement('td');
+            td.textContent = value.toFixed(2);
+            td.style.backgroundColor = cellColor(value);
+            td.title = rowName + ' и ' + colName;
+            td.addEventListener('click', () => onMatrixCellClick(i, j));
+            tr.appendChild(td);
+        });
+        table.appendChild(tr);
+    });
+
+    container.appendChild(table);
+}
+
+function onMatrixCellClick(i, j) {
+    const colA = currentMatrixCols[i];
+    const colB = currentMatrixCols[j];
+    const value = currentMatrixData[i][j];
+    drawScatter(currentMatrixRows, colA, colB, value);
+}
+
+function renderMatrix() {
+    const mode = document.querySelector('#matrixMode').value;
+    let cols, rowsForCorr;
+
+    if (mode === 'metrics') {
+        cols = metricCols;
+        rowsForCorr = aggregatedByMonth;
+    } else {
+        const sliceCol = document.querySelector('#sliceSelect').value;
+        const metric = document.querySelector('#metricSelect').value;
+        if (!sliceCol || !metric) return;
+        const pivot = buildPivot(rawRows, colTypes, sliceCol, metric);
+        cols = pivot.cols;
+        rowsForCorr = pivot.rows;
+    }
+
+    const matrix = buildMatrix(rowsForCorr, cols);
+    currentMatrixCols = cols;
+    currentMatrixData = matrix;
+    currentMatrixRows = rowsForCorr;
+
+    document.querySelector('#matrixInfo').textContent =
+        'Матрица посчитана на ' + rowsForCorr.length + ' наблюдениях.';
+
+    drawMatrixTable(cols, matrix);
+}
+
+function onMatrixModeChange() {
+    const mode = document.querySelector('#matrixMode').value;
+    document.querySelector('#sliceControls').style.display = mode === 'slice' ? '' : 'none';
+    renderMatrix();
+}
+
+function setupMatrixControls() {
+    const sliceSelect = document.querySelector('#sliceSelect');
+    sliceSelect.textContent = '';
+    sliceCols.forEach(sc => {
+        const opt = document.createElement('option');
+        opt.value = sc;
+        opt.textContent = sc;
+        sliceSelect.appendChild(opt);
+    });
+
+    const metricSelect = document.querySelector('#metricSelect');
+    metricSelect.textContent = '';
+    metricCols.forEach(mc => {
+        const opt = document.createElement('option');
+        opt.value = mc;
+        opt.textContent = mc;
+        metricSelect.appendChild(opt);
+    });
+
+    document.querySelector('#matrixMode').addEventListener('change', onMatrixModeChange);
+    sliceSelect.addEventListener('change', renderMatrix);
+    metricSelect.addEventListener('change', renderMatrix);
+
+    onMatrixModeChange();
+}
+
+function drawScatter(rows, colA, colB, coefficient) {
+    const points = [];
+    rows.forEach(r => {
+        const x = r[colA];
+        const y = r[colB];
+        if (!isNaN(x) && !isNaN(y)) points.push({ x: x, y: y });
+    });
+
+    if (scatterChartInstance) {
+        scatterChartInstance.destroy();
+    }
+
+    const ctx = document.querySelector('#scatterChart').getContext('2d');
+    scatterChartInstance = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [{
+                label: colA + ' и ' + colB,
+                data: points,
+                backgroundColor: 'rgba(40, 90, 190, 0.7)'
+            }]
+        },
+        options: {
+            maintainAspectRatio: false,
+            plugins: {
+                title: { display: true, text: 'Коэффициент корреляции: ' + coefficient.toFixed(2) },
+                legend: { display: false }
+            },
+            scales: {
+                x: { title: { display: true, text: colA } },
+                y: { title: { display: true, text: colB } }
+            }
+        }
+    });
+
+    document.querySelector('#scatterNote').textContent =
+        describeCorrelation(coefficient) + ' Связь не означает причину: оба показателя могут зависеть от третьего.';
+}
+
+function renderTopCorrelations() {
+    const container = document.querySelector('#topCorrelations');
+    container.textContent = '';
+
+    const title = document.createElement('h2');
+    title.textContent = 'Сильнейшие связи';
+    container.appendChild(title);
+
+    const pairs = [];
+    for (let i = 0; i < metricCols.length; i++) {
+        for (let j = i + 1; j < metricCols.length; j++) {
+            const colA = metricCols[i];
+            const colB = metricCols[j];
+            const value = corr(
+                aggregatedByMonth.map(r => r[colA]),
+                aggregatedByMonth.map(r => r[colB])
+            );
+            pairs.push({ colA: colA, colB: colB, value: value });
+        }
+    }
+
+    const sorted = [...pairs].sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+    const top = sorted.slice(0, 7);
+
+    const list = document.createElement('ul');
+    top.forEach(pair => {
+        const li = document.createElement('li');
+        const text = document.createElement('span');
+        text.textContent = pair.colA + ' и ' + pair.colB + ': ' + pair.value.toFixed(2) +
+            ' — сила связи: ' + strengthWord(pair.value) + ', направление: ' + directionWord(pair.value) + '. ';
+        li.appendChild(text);
+
+        const btn = document.createElement('button');
+        btn.textContent = 'Диаграмма рассеяния';
+        btn.addEventListener('click', () => drawScatter(aggregatedByMonth, pair.colA, pair.colB, pair.value));
+        li.appendChild(btn);
+
+        list.appendChild(li);
+    });
+    container.appendChild(list);
+}
+
+function renderOutliers() {
+    const container = document.querySelector('#outliersTable');
+    container.textContent = '';
+
+    const table = document.createElement('table');
+    const headRow = document.createElement('tr');
+    ['Срез', 'Значение среза', 'Показатель', 'Месяц', 'Значение', 'Отклонение от медианы'].forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        headRow.appendChild(th);
+    });
+    table.appendChild(headRow);
+
+    const shown = outliersAll.slice(0, outliersShown);
+    shown.forEach(o => {
+        const tr = document.createElement('tr');
+        [o.slice, o.sliceValue, o.metric, o.month, o.value.toFixed(2), 'в ' + o.ratio.toFixed(2) + ' раза от медианы своего ряда'].forEach(v => {
+            const td = document.createElement('td');
+            td.textContent = v;
+            tr.appendChild(td);
+        });
+        table.appendChild(tr);
+    });
+
+    container.appendChild(table);
+
+    const moreBtn = document.querySelector('#showMoreOutliers');
+    moreBtn.style.display = outliersShown < outliersAll.length ? '' : 'none';
+}
+
+function updateDynSliceValueOptions() {
+    const sliceCol = document.querySelector('#dynSlice').value;
+    const valueSelect = document.querySelector('#dynSliceValue');
+    valueSelect.textContent = '';
+    if (!sliceCol) {
+        valueSelect.style.display = 'none';
+        return;
+    }
+    valueSelect.style.display = '';
+    const uniq = [...new Set(rawRows.map(r => r[sliceCol]))].sort();
+    uniq.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        valueSelect.appendChild(opt);
+    });
+}
+
+function setupDynamicsControls() {
+    const metricSelect = document.querySelector('#dynMetric');
+    metricSelect.textContent = '';
+    metricCols.forEach(mc => {
+        const opt = document.createElement('option');
+        opt.value = mc;
+        opt.textContent = mc;
+        metricSelect.appendChild(opt);
+    });
+
+    const sliceSelect = document.querySelector('#dynSlice');
+    sliceSelect.textContent = '';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'вся выгрузка';
+    sliceSelect.appendChild(noneOpt);
+    sliceCols.forEach(sc => {
+        const opt = document.createElement('option');
+        opt.value = sc;
+        opt.textContent = sc;
+        sliceSelect.appendChild(opt);
+    });
+
+    metricSelect.addEventListener('change', renderDynamics);
+    sliceSelect.addEventListener('change', () => {
+        updateDynSliceValueOptions();
+        renderDynamics();
+    });
+    document.querySelector('#dynSliceValue').addEventListener('change', renderDynamics);
+
+    updateDynSliceValueOptions();
+}
+
+function renderDynamics() {
+    const metric = document.querySelector('#dynMetric').value;
+    const sliceCol = document.querySelector('#dynSlice').value;
+    const sliceValue = document.querySelector('#dynSliceValue').value;
+    if (!metric) return;
+
+    let series;
+    if (sliceCol) {
+        const agg = aggregateMonths(rawRows, colTypes, sliceCol);
+        series = agg
+            .filter(r => r.slice === sliceValue)
+            .map(r => ({ month: r.month, value: r[metric] }));
+    } else {
+        series = aggregatedByMonth.map(r => ({ month: r.month, value: r[metric] }));
+    }
+    series = [...series].sort((a, b) => (a.month < b.month ? -1 : 1));
+
+    const outlierMonths = new Set(
+        outliersAll
+            .filter(o => sliceCol && o.metric === metric && o.slice === sliceCol && o.sliceValue === sliceValue)
+            .map(o => o.month)
+    );
+
+    const pointColors = series.map(p => (outlierMonths.has(p.month) ? '#c62828' : '#2a5db0'));
+    const pointRadii = series.map(p => (outlierMonths.has(p.month) ? 7 : 3));
+
+    if (dynamicsChartInstance) {
+        dynamicsChartInstance.destroy();
+    }
+
+    const ctx = document.querySelector('#dynamicsChart').getContext('2d');
+    dynamicsChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: series.map(p => p.month),
+            datasets: [{
+                label: metric,
+                data: series.map(p => p.value),
+                borderColor: '#2a5db0',
+                pointBackgroundColor: pointColors,
+                pointRadius: pointRadii,
+                fill: false
+            }]
+        },
+        options: {
+            maintainAspectRatio: false,
+            plugins: {
+                title: { display: true, text: 'Динамика показателя «' + metric + '»' },
+                legend: { display: false }
+            },
+            scales: {
+                x: { type: 'category', title: { display: true, text: 'Месяц' } },
+                y: { title: { display: true, text: metric } }
+            }
+        }
+    });
+}
+
+document.querySelector('#fileInput').addEventListener('change', function(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const text = e.target.result;
+
+        rawRows = parseCSV(text);
+        colTypes = detectTypes(rawRows);
+        metricCols = Object.keys(colTypes).filter(c => colTypes[c] === 'metric');
+        sliceCols = Object.keys(colTypes).filter(c => colTypes[c] === 'slice');
+        aggregatedByMonth = aggregateMonths(rawRows, colTypes);
+        outliersAll = detectOutliers(rawRows, colTypes);
+        outliersAll = [...outliersAll].sort((a, b) => Math.abs(b.ratio - 1) - Math.abs(a.ratio - 1));
+        outliersShown = 20;
+
+        renderPassport();
+        setupMatrixControls();
+        renderTopCorrelations();
+        renderOutliers();
+        setupDynamicsControls();
+        renderDynamics();
+    };
+    reader.readAsText(file, 'UTF-8');
+});
+
+document.querySelector('#showMoreOutliers').addEventListener('click', function() {
+    outliersShown = outliersAll.length;
+    renderOutliers();
+});
+
+</script>
+</body>
+</html>
