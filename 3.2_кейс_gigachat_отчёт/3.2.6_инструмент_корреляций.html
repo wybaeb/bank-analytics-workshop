@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Матрица корреляций банковских данных</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { padding: 8px; text-align: center; border: 1px solid #ddd; }
+        .positive { background-color: greenyellow; color: black; }
+        .negative { background-color: tomato; color: white; }
+        canvas { height: 400px; max-width: 100%; display: block; margin-top: 20px; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+</head>
+<body>
+<h1>Анализ корреляций банковских данных</h1>
+<input type="file" id="csvFileInput" accept=".csv"/>
+<div id="correlationMatrixContainer"></div>
+<div id="scatterPlotContainer"></div>
+<script>
+document.getElementById('csvFileInput').addEventListener('change', function(event) {
+    const file = event.target.files[0];
+    if (!file || !/\.csv$/i.test(file.name)) return alert("Выберите файл формата CSV.");
+    
+    let reader = new FileReader();
+    reader.onload = processCSVData;
+    reader.readAsText(file);
+});
+
+function processCSVData(e) {
+    const csvContent = e.target.result.replace(/^﻿/, "").split("\n");
+    const headers = csvContent.shift().trim().split(";");
+    const data = [];
+
+    for (let row of csvContent) {
+        if (!row.trim()) continue;
+        const values = row.split(";");
+        const record = {};
+        for (let i = 0; i < headers.length; ++i)
+            record[headers[i]] = values[i].trim() === "" ? null : values[i].replace(",", ".");
+        data.push(record);
+    }
+
+    // Агрегация по месяцам
+    // ПРАВКА: результат нужен обработчику клика по ячейке, поэтому глобально
+    window.aggregatedData = aggregateMonthly(data, headers);
+    const aggregatedData = window.aggregatedData;
+
+    // Вычисление корреляционной матрицы
+    const correlationMatrix = calculateCorrelation(aggregatedData);
+
+    renderCorrelationTable(correlationMatrix, headers.filter(h => isNumericColumn(h)));
+}
+
+// Функция агрегации данных по месяцам
+function aggregateMonthly(data, headers) {
+    const result = {};
+    for (const row of data) {
+        const month = row['месяц'];
+        if (!result[month]) result[month] = {};
+        
+        for (const header of headers.slice(1)) {
+            if (isNumericColumn(header)) {
+                const value = parseFloat(row[header]);
+                if (value !== null && !isNaN(value)) {
+                    if (/^(средн|ставка|проц|доля)/.test(header))
+                        result[month][header] = (result[month][header] || []).concat([value]);
+                    else 
+                        result[month][header] = (result[month][header] || 0) + value;
+                }
+            } else {
+                result[month][header] = row[header]; // Текстовые поля пропускаем
+            }
+        }
+    }
+
+    // Среднее арифметическое для средних значений
+    Object.keys(result).forEach(month => {
+        for (const key in result[month])
+            if (Array.isArray(result[month][key]))
+                result[month][key] = result[month][key].reduce((a,b)=>a+b,0) / result[month][key].length;
+    });
+
+    return Object.values(result);
+}
+
+// Проверяет является ли столбец числовым
+function isNumericColumn(columnName) {
+    return columnName.match(/^[^;]+$/) &&
+           ['новые_счета','закрытые_счета','активные_счета_на_конец_месяца',
+            'средний_остаток_тыс_руб','расходы_на_продвижение_тыс_руб',
+            'ставка_по_счёту_проц','жалобы'].includes(columnName);
+}
+
+// Расчёт корреляции Пирсона
+function pearsonCorrelation(x, y) {
+    const n = x.length;
+    const sumX = x.reduce((acc,v)=>acc+v,0);
+    const sumY = y.reduce((acc,v)=>acc+v,0);
+    const sumXY = x.map((v,i)=>v*y[i]).reduce((acc,v)=>acc+v,0);
+    const sumXX = x.map(v=>v*v).reduce((acc,v)=>acc+v,0);
+    const sumYY = y.map(v=>v*v).reduce((acc,v)=>acc+v,0);
+
+    const numerator = n*sumXY - sumX*sumY;
+    const denominator = Math.sqrt((n*sumXX-sumX**2)*(n*sumYY-sumY**2));
+    return denominator === 0 ? 0 : numerator / denominator;
+}
+
+// Создание корреляционной матрицы
+function calculateCorrelation(data) {
+    const numericColumns = Object.keys(data[0]).filter(isNumericColumn);
+    const matrix = Array(numericColumns.length).fill(null).map(() => []);
+
+    for (let i=0; i<numericColumns.length; ++i) {
+        const colIValues = data.map(d => d[numericColumns[i]]);
+        for (let j=i+1; j<numericColumns.length; ++j) {
+            const colJValues = data.map(d => d[numericColumns[j]]);
+            const corr = pearsonCorrelation(colIValues, colJValues);
+            matrix[i][j] = corr.toFixed(2); // Заполняем верхнюю половину треугольника
+            matrix[j][i] = corr.toFixed(2); // Симметрично заполняем нижнюю половину
+        }
+    }
+    return {matrix, columns: numericColumns};
+}
+
+// Отрисовка таблицы корреляций
+function renderCorrelationTable(matrixInfo, columns) {
+    const container = document.createElement('table');
+    const thead = container.createTHead();
+    const tbody = container.createTBody();
+
+    // Заголовочная строка
+    const trHeader = thead.insertRow(-1);
+    trHeader.insertCell(-1).innerHTML = '';
+    columns.forEach(col => trHeader.insertCell(-1).textContent = col);
+
+    // Строки таблицы
+    for (let i=0; i<columns.length; ++i) {
+        const row = tbody.insertRow(-1);
+        row.insertCell(-1).textContent = columns[i];
+        for (let j=0; j<columns.length; ++j) {
+            const cellValue = matrixInfo.matrix[i][j];
+            const cell = row.insertCell(-1);
+            if (cellValue != undefined) {
+                cell.textContent = cellValue;
+                cell.classList.add(cellValue > 0 ? 'positive' : 'negative');
+            }
+        }
+    }
+
+    // Добавляем таблицу на страницу
+    document.getElementById('correlationMatrixContainer').appendChild(container);
+
+    // Список наиболее значимых связей
+    const strongestPairs = findStrongestCorrelations(matrixInfo.matrix, columns);
+    const listEl = document.createElement('ul');
+    strongestPairs.forEach(pair => {
+        const li = document.createElement('li');
+        li.textContent = `${pair.corr} — сильная связь: ${pair.colA} и ${pair.colB}`;
+        listEl.appendChild(li);
+    });
+    document.getElementById('correlationMatrixContainer').appendChild(listEl);
+
+    // Обработчик кликов по таблице
+    container.addEventListener('click', handleClickOnCell.bind(null, matrixInfo.columns));
+}
+
+// Поиск трёх сильнейших корреляционных пар
+function findStrongestCorrelations(matrix, columns) {
+    const pairs = [];
+    for (let i=0; i<matrix.length; ++i)
+        for (let j=i+1; j<matrix.length; ++j)
+            if (matrix[i][j] != undefined)
+                pairs.push({colA: columns[i], colB: columns[j], corr: Math.abs(parseFloat(matrix[i][j]))});
+    return pairs.sort((a,b)=>b.corr-a.corr).slice(0,3);
+}
+
+// Построение диаграммы рассеяния
+function plotScatterChart(colA, colB, data) {
+    const ctx = document.getElementById('scatterPlotCanvas').getContext('2d');
+    const chartInstance = Chart.getChart(ctx.canvas);
+    if (chartInstance) chartInstance.destroy(); // Удаляем старый график
+
+    const labels = data.map(d => d['месяц']);
+    const seriesA = data.map(d => d[colA]);
+    const seriesB = data.map(d => d[colB]);
+
+    new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [{
+                label: `Корреляция (${colA}, ${colB})`,
+                data: labels.map((_, idx) => ({x: seriesA[idx], y: seriesB[idx]}))
+            }]
+        },
+        options: {
+            plugins: {
+                title: {display:true,text:`Диаграмма рассеяния "${colA}" vs "${colB}"`},
+                legend: {display:false}
+            },
+            scales: {
+                x: {type:'linear'},
+                y: {type:'linear'}
+            },
+            maintainAspectRatio: false,
+            responsive: true
+        }
+    });
+}
+
+// Обработка клика по ячейке таблицы
+function handleClickOnCell(columns, event) {
+    const target = event.target.closest('td');
+    if (!target || target.cellIndex <= 0 || target.parentNode.rowIndex <= 0) return;
+    const colAIndex = target.parentNode.rowIndex - 1;
+    const colBIndex = target.cellIndex - 1;
+    const colA = columns[colAIndex];
+    const colB = columns[colBIndex];
+    plotScatterChart(colA, colB, aggregatedData);
+}
+
+// Создаём холст для графиков
+const scatterPlotCanvas = document.createElement('canvas');
+scatterPlotCanvas.id = 'scatterPlotCanvas';
+document.getElementById('scatterPlotContainer').appendChild(scatterPlotCanvas);
+</script>
+</body>
+</html>
