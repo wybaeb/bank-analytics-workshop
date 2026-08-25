@@ -230,12 +230,14 @@ function getQuantile(arr, p) {
 
 function renderTrendInfo(trendLine, dataPoints) {
     const firstPoint = trendLine[0], lastPoint = trendLine[trendLine.length-1];
-    const changePerMonth = ((lastPoint-firstPoint)/trendLine.length*100).toFixed(2)+'%';
-    const totalChange = (((lastPoint-dataPoints[0])/dataPoints[0]*100)).toFixed(2)+'%';
-    
+    // ПРАВКА: наклон выводился как процент от абсолютного значения;
+    // наклон — в единицах показателя за месяц, процент — только у итога за период
+    const changePerMonth = ((lastPoint-firstPoint)/(trendLine.length-1)).toFixed(1);
+    const totalChange = (((lastPoint-firstPoint)/firstPoint*100)).toFixed(1)+'%';
+
     // ПРАВКА: селектор указывал на переименованный контейнер
     document.getElementById('trend-info').textContent =
-        `Наклон тренда за месяц: ${changePerMonth}, изменение за период: ${totalChange}`;
+        `Наклон тренда: ${changePerMonth} в месяц, изменение за период: ${totalChange}`;
 }
 
 function renderOutliers(outlierIndexes, dataPoints, months) {
