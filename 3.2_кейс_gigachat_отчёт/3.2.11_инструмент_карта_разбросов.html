@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Карта разбросов</title>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    #scatterChart { height: 400px; width: 100%; margin-top: 20px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+</head>
+<body>
+<h1>Диаграмма рассеяния</h1>
+<input type="file" id="csvFileInput" accept=".csv"/>
+<div style="margin-bottom: 10px;">Показатель X:</div>
+<select id="xAxisSelect"></select>
+<div style="margin-bottom: 10px;">Показатель Y:</div>
+<select id="yAxisSelect"></select>
+<div id="correlationLabel">Коэффициент корреляции: N/A</div>
+<canvas id="scatterChart"></canvas>
+<script>
+function parseCsv(text) {
+  var lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
+  var headers = lines[0].split(';');
+  var rows = lines.slice(1).map(function (l) { return l.split(';'); });
+  return { headers: headers, rows: rows };
+}
+function toNumber(v) {
+  var n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+function aggregateData(data) {
+  const numericHeaders = data.headers.filter(h => !isNaN(toNumber(data.rows[0][data.headers.indexOf(h)])));
+  let result = {};
+  
+  for(let row of data.rows){
+    const month = row[data.headers.indexOf("месяц")];
+    
+    if (!result[month]) {
+      result[month] = {};
+      
+      for(const header of numericHeaders){
+        result[month][header] = [];
+      }
+    }
+    
+    for(const header of numericHeaders){
+      const value = toNumber(row[data.headers.indexOf(header)]);
+      if(value !== null){
+        result[month][header].push(value);
+      }
+    }
+  }
+  
+  // Агрегация значений
+  for(const month in result){
+    for(const header in result[month]){
+      const values = result[month][header];
+      if(values.length === 0) continue;
+      
+      if(header.includes("средн") || header.includes("ставка") || header.includes("проц") || header.includes("доля")){
+        result[month][header] = values.reduce((a,b)=>a+b)/values.length;
+      } else{
+        result[month][header] = values.reduce((a,b)=>a+b);
+      }
+    }
+  }
+  
+  return Object.entries(result).map(([month, values])=>({...values, месяц: month}));
+}
+
+// Корреляция Пирсона
+function pearsonCorrelation(xValues, yValues) {
+  function mean(arr) { return arr.reduce((acc,val)=>acc+val,0)/arr.length; }
+  function stdDev(arr, avg) { 
+    const variance = arr.map(val => Math.pow(val - avg, 2)).reduce((acc,val)=>acc+val,0)/(arr.length-1); 
+    return Math.sqrt(variance); 
+  }
+  
+  const xMean = mean(xValues), yMean = mean(yValues);
+  const xStdDev = stdDev(xValues,xMean), yStdDev = stdDev(yValues,yMean);
+  
+  const covariance = xValues.reduce((sum, val, i)=>{
+    sum += ((val-xMean)*(yValues[i]-yMean)); 
+    return sum;
+  },0)/(xValues.length-1);
+  
+  return covariance/(xStdDev*yStdDev);
+}
+
+document.getElementById("csvFileInput").addEventListener("change", function(event) {
+  const file = event.target.files[0];
+  const reader = new FileReader();
+  
+  reader.onload = function(e) {
+    const csvText = e.target.result;
+    const parsedData = parseCsv(csvText);
+    window.aggregatedData = aggregateData(parsedData); /* ПРАВКА: данные нужны обработчику перерисовки */
+    
+    document.querySelectorAll("#xAxisSelect option,#yAxisSelect option").forEach(opt => opt.remove());
+    
+    const numericColumns = parsedData.headers.filter(h => toNumber(parsedData.rows[0][parsedData.headers.indexOf(h)]) !== null); /* ПРАВКА: только числовые колонки */
+    numericColumns.forEach(col=>{
+      document.getElementById("xAxisSelect").appendChild(new Option(col,col));
+      document.getElementById("yAxisSelect").appendChild(new Option(col,col));
+    });
+    
+    updateScatterPlot();
+  };
+  
+  reader.readAsText(file);
+});
+
+function updateScatterPlot() {
+  const xCol = document.getElementById("xAxisSelect").value;
+  const yCol = document.getElementById("yAxisSelect").value;
+  
+  const chartContainer = document.getElementById("scatterChart");
+  if(chartContainer.chartInstance) chartContainer.chartInstance.destroy();
+  
+  const xValues = [], yValues = [];
+  const labels = [];
+  
+  const dataRows = window.aggregatedData; /* ПРАВКА */
+  
+  for(const row of dataRows){
+    xValues.push(row[xCol]);
+    yValues.push(row[yCol]);
+    labels.push(row["месяц"]);
+  }
+  
+  const correlationCoeff = pearsonCorrelation(xValues, yValues).toFixed(2);
+  document.getElementById("correlationLabel").textContent = `Коэффициент корреляции: ${correlationCoeff}`;
+  
+  const scatterConfig = {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: `${xCol} vs ${yCol}`,
+        data: xValues.map((v,i)=>({x:v,y:yValues[i],label:labels[i]})),
+        backgroundColor: '#ff6384'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { title: { display: true, text: xCol }},
+        y: { title: { display: true, text: yCol }}
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: (${ctx.parsed.x}, ${ctx.parsed.y})\n${ctx.raw.label}`
+          }
+        }
+      }
+    }
+  };
+  
+  chartContainer.chartInstance = new Chart(chartContainer, scatterConfig);
+}
+
+window.addEventListener("DOMContentLoaded", ()=>{
+  document.getElementById("xAxisSelect").onchange = updateScatterPlot;
+  document.getElementById("yAxisSelect").onchange = updateScatterPlot;
+});
+</script>
+</body>
+</html>

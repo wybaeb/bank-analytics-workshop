@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Динамика показателей</title>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    #graph-container { height: 400px; width: 100%; position: relative; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+</head>
+<body>
+<div style="text-align:center; margin-bottom:20px;">
+  <input type="file" id="csvFileInput" accept=".csv"/>
+</div>
+<div style="display:flex; justify-content:center; gap:20px; margin-bottom:20px;">
+  <select id="metricSelect"></select>
+  <select id="sliceSelect"></select>
+</div>
+<div id="graph-container"></div>
+<script>
+function parseCsv(text) {
+  var lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
+  var headers = lines[0].split(';');
+  var rows = lines.slice(1).map(function (l) { return l.split(';'); });
+  return { headers: headers, rows: rows };
+}
+function toNumber(v) {
+  var n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+document.getElementById("csvFileInput").addEventListener("change", function(event){
+  var file = event.target.files[0];
+  if(file && file.type === 'text/csv'){
+    var reader = new FileReader();
+    reader.onload = function(e){
+      var csvData = e.target.result;
+      processCSV(csvData);
+    };
+    reader.readAsText(file);
+  } else {
+    alert("Выберите файл формата .csv");
+  }
+});
+var parsedData; /* ПРАВКА: переменная нужна и обработчикам списков */
+function processCSV(data){
+  parsedData = parseCsv(data);
+  
+  // Определяем типы столбцов
+  var numericColumns = [];
+  var sliceColumns = [];
+  for(var i=1;i<parsedData.headers.length;i++){
+    var colName = parsedData.headers[i];
+    if(colName.includes('_') || colName.match(/^(средн|ставка|проц|доля)/)){
+      numericColumns.push(i); 
+    }else{
+      sliceColumns.push(i);
+    }
+  }
+  
+  // Заполняем списки выборки
+  document.getElementById("metricSelect").innerHTML = "";
+  document.getElementById("sliceSelect").innerHTML = "";
+  numericColumns.forEach(function(index){
+    var option = document.createElement("option");
+    option.value = index;
+    option.textContent = parsedData.headers[index];
+    document.getElementById("metricSelect").appendChild(option);
+  });
+  sliceColumns.forEach(function(index){
+    var option = document.createElement("option");
+    option.value = index;
+    option.textContent = parsedData.headers[index];
+    document.getElementById("sliceSelect").appendChild(option);
+  });
+  
+  // Обработчик изменения списков
+  document.getElementById("metricSelect").onchange = updateChart;
+  document.getElementById("sliceSelect").onchange = updateChart;
+  
+  // Первоначальная отрисовка графика
+  updateChart();
+}
+function aggregateData(parsedData, metricIndex, sliceIndex){
+  var result = {};
+  parsedData.rows.forEach(function(row){
+    var month = row[0]; // первый столбец - месяц
+    var value = toNumber(row[metricIndex]);
+    var sliceValue = row[sliceIndex];
+    
+    if(!result[sliceValue]) result[sliceValue] = {};
+    if(!result[sliceValue][month]){
+      result[sliceValue][month] = { sum: 0, count: 0 };
+    }
+    result[sliceValue][month].sum += value !== null ? value : 0;
+    result[sliceValue][month].count++;
+  });
+  
+  // Преобразуем результат в массив точек для графика
+  var datasets = Object.keys(result).map(function(sliceKey){
+    var dataPoints = Object.keys(result[sliceKey]).sort().map(function(month){
+      var aggResult = result[sliceKey][month];
+      var avgOrSum = parsedData.headers[metricIndex].match(/^(средн|ставка|проц|доля)/)
+        ? aggResult.sum / aggResult.count
+        : aggResult.sum;
+      return [month, avgOrSum];
+    });
+    return { label: sliceKey, data: dataPoints.map(d => d[1]), labels: dataPoints.map(d => d[0])};
+  });
+  return datasets;
+}
+function updateChart(){
+  var chartContainer = document.getElementById("graph-container");
+  while(chartContainer.firstChild) chartContainer.removeChild(chartContainer.lastChild);
+  
+  var metricIndex = Number(document.getElementById("metricSelect").value);
+  var sliceIndex = Number(document.getElementById("sliceSelect").value);
+  
+  var aggregatedData = aggregateData(parsedData, metricIndex, sliceIndex);
+  
+  var ctx = document.createElement("canvas");
+  ctx.id = "myChart";
+  chartContainer.appendChild(ctx);
+  
+  var myChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: aggregatedData[0].labels,
+      datasets: aggregatedData.map(function(dataset){
+        return {
+          label: dataset.label,
+          data: dataset.data,
+          fill: false,
+          borderColor: getRandomColor(),
+          tension: 0.1
+        };
+      })
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          title: { display: true, text: 'Месяцы' }
+        },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: parsedData.headers[metricIndex] }
+        }
+      }
+    }
+  });
+}
+// Вспомогательная функция для случайного цвета линии
+function getRandomColor() {
+  return '#' + Math.floor(Math.random()*16777215).toString(16);
+}
+</script>
+</body>
+</html>

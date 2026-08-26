@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Сезонный профиль показателя</title>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    #graph-container { height: 400px; width: 100%; margin-top: 20px; position: relative; }
+    .select-label { display: block; margin-bottom: 5px; }
+    select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
+    button { padding: 10px 20px; background-color: #007bff; color: white; border: none; cursor: pointer; border-radius: 4px; transition: all 0.3s ease-in-out; }
+    button:hover { background-color: #0056b3; }
+    p { margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+<h1>Анализ сезонности показателей</h1>
+<input type="file" id="csv-file-input" accept=".csv"/>
+<div class="select-label">Выберите показатель:</div>
+<select id="metric-select"></select><br/>
+<button onclick="processData()">Построить график</button>
+<div id="graph-container"></div>
+<p id="month-info"></p>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<script>
+function parseCsv(text) {
+  var lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
+  var headers = lines[0].split(';');
+  var rows = lines.slice(1).map(function (l) { return l.split(';'); });
+  return { headers: headers, rows: rows };
+}
+function toNumber(v) {
+  var n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+
+// Функция агрегации данных по месяцам
+function aggregateByMonth(data, metricIndex) {
+  const months = ['янв', 'фев', 'мар', 'апр', 'май', 'июнь', 'июль', 'авг', 'сен', 'окт', 'нояб', 'дек'];
+  
+  // Инициализация итоговых значений
+  let aggregatedValues = Array.from({ length: 12 }, () => ({ sum: 0, count: 0 }));
+
+  data.rows.forEach(row => {
+    if (!row || row.length <= metricIndex) return;
+    
+    const monthNum = Number.parseInt(row[0].substring(5)) - 1; // Извлекаем номер месяца
+    const value = toNumber(row[metricIndex]);
+
+    if (value !== null && !isNaN(value)) {
+      aggregatedValues[monthNum].sum += value;
+      aggregatedValues[monthNum].count++;
+    }
+  });
+
+  // Вычисляем среднее значение по каждому месяцу
+  return aggregatedValues.map(item => item.count === 0 ? null : item.sum / item.count);
+}
+
+// Обновление графика
+function updateChart(metricName, values) {
+  const ctx = document.getElementById("myChart").getContext("2d");
+  if (window.myChartInstance) window.myChartInstance.destroy(); 
+
+  const chartConfig = {
+    type: 'bar',
+    data: {
+      labels: ['янв', 'фев', 'мар', 'апр', 'май', 'июнь', 'июль', 'авг', 'сен', 'окт', 'нояб', 'дек'],
+      datasets: [{
+        label: metricName,
+        data: values,
+        backgroundColor: '#007BFF'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          beginAtZero: true
+        }
+      },
+      plugins: {
+        legend: {
+          display: false
+        }
+      }
+    }
+  };
+
+  window.myChartInstance = new Chart(ctx, chartConfig);
+}
+
+// Поиск самого сильного и слабого месяцев
+function findStrongestWeakestMonths(values) {
+  const avgValue = values.reduce((a, b) => a + b, 0) / values.length;
+  let strongest = { index: -1, deviation: -Infinity };
+  let weakest = { index: -1, deviation: Infinity };
+
+  for (let i = 0; i < values.length; i++) {
+    const dev = ((values[i] - avgValue) / avgValue * 100).toFixed(2);
+    if (dev > strongest.deviation) {
+      strongest.index = i;
+      strongest.deviation = dev;
+    } else if (dev < weakest.deviation) {
+      weakest.index = i;
+      weakest.deviation = dev;
+    }
+  }
+
+  return [strongest, weakest];
+}
+
+// Основная функция обработки данных
+function processData() {
+  const fileInput = document.getElementById('csv-file-input');
+  const selectedFile = fileInput.files[0];
+
+  if (!selectedFile) return alert('Файл не выбран!');
+
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    const csvText = event.target.result;
+    const parsedData = parseCsv(csvText);
+
+    // Определяем индекс выбранного показателя
+    const metricSelect = document.getElementById('metric-select');
+    const metricIndex = metricSelect.selectedIndex;
+
+    // Агрегирование данных по месяцам
+    const monthlyAverages = aggregateByMonth(parsedData, metricIndex);
+
+    // Построение графика
+    updateChart(parsedData.headers[metricIndex], monthlyAverages);
+
+    // Анализ сильных/слабых месяцев
+    const [strongest, weakest] = findStrongestWeakestMonths(monthlyAverages);
+    const months = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+    document.getElementById('month-info').innerHTML =
+      `Самый сильный месяц: ${months[strongest.index]} (${strongest.deviation}%)<br>` +
+      `Самый слабый месяц: ${months[weakest.index]} (${weakest.deviation}%)`;
+  };
+
+  reader.readAsText(selectedFile);
+}
+
+// Загрузка страницы
+document.addEventListener('DOMContentLoaded', function() {
+  const fileInput = document.getElementById('csv-file-input');
+  fileInput.addEventListener('change', function() {
+    const file = this.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const result = e.target.result;
+        const parsedData = parseCsv(result);
+        
+        // Заполняем выпадающий список показателями
+        const metricSelect = document.getElementById('metric-select');
+        metricSelect.innerHTML = '';
+        /* ПРАВКА: числовые колонки определяются по данным первой строки,
+           а не по имени; после заполнения списка график строится сразу */
+        parsedData.headers.forEach(function (header, idx) {
+          if (idx === 0) return;
+          if (toNumber(parsedData.rows[0][idx]) === null) return;
+          const option = document.createElement('option');
+          option.value = header;
+          option.text = header;
+          metricSelect.appendChild(option);
+        });
+        processData();
+        metricSelect.onchange = processData;
+      };
+      reader.readAsText(file);
+    }
+  });
+});
+</script>
+<div style="height:420px"><canvas id="myChart"></canvas></div> <!-- ПРАВКА: холст был скрыт display:none -->
+</body>
+</html>
